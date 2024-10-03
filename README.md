@@ -1,3 +1,6 @@
+<!-- MAFin Logo -->
+![Alt text](https://i.postimg.cc/V5QnxMWp/logo-no-background.png "")
+
 # MAFin: Tailoring Multiple Alignments for Individual Motif Discovery
 
 ## Description
