@@ -3,7 +3,7 @@ import subprocess
 import json
 
 # Define directory paths
-BASE_DIR = "/storage/group/izg5139/default/multiple_alignment/maffin_git"
+BASE_DIR = os.getcwd()
 TEST_DIR = os.path.join(BASE_DIR, "test")
 RESULTS_DIR = os.path.join(BASE_DIR, "results")
 REF_GENOME_DIR = os.path.join(RESULTS_DIR, "ref_genome")
