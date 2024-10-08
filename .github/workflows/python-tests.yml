@@ -32,4 +32,4 @@ jobs:
 
       - name: Run tests
         run: |
-          python ./test/maffin_testing.py  # Run your test file
+          python ./test/mafin_testing.py  # Run your test file
