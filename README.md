@@ -70,6 +70,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 ## Example Usage
 
+
 ### Searching with Regex Patterns
 ```bash
 python maf_motif_search.py --maf_file data/sample.maf \
@@ -159,7 +160,23 @@ After running the tool, a JSON file is generated containing detailed information
 
 ### CSV Output
 
-Yet to be implemented
+The csv file generated contains the coordinates of the motif found along with its name , type , strand direction and conservation. Each motif_hit is then followed by a number of columns for each aligned sequence in the MAF block where the hit was found. The cells are then filled with an entry, <b>similarity_vector, conservation_score</b>
+<br>
+e.g. <b>11110110000,54.55%</b>
+ 	
+
+| motif_hit_info            | motif_name | motif_type | motif_strand | score               | fake_species_48             | fake_species_45             | fake_species_6              | fake_species_54             | fake_species_65             |
+|---------------------------|------------|------------|--------------|---------------------|-----------------------------|-----------------------------|-----------------------------|-----------------------------|-----------------------------|
+| chr16:9722-9732,ACCTGTGGTCT | MA0002.2   | pwm        | +            | 10.025236129760742   | 11110110000,54.55%          | 11111111111,100.00%         | 11111101111,90.91%          | 11011111111,90.91%          | 10110111011,72.73%          |
+| chr46:33765-33775,TAACCACAGAA | MA0002.2   | pwm        | +            | 11.518963813781738   | 11111111111,100.00%         |                             | 11111111011,90.91%          | 11111111111,100.00%         | 11011011110,72.73%          |
+| chr69:51945-51955,TGTTGTGGTTA | MA0002.2   | pwm        | +            | 10.343249320983887   | 11111111111,100.00%         |                             | 01111111111,90.91%          | 11111111111,100.00%         | 11111011110,81.82%          |
+| chr80:61982-61992,CAACCACAGGC | MA0002.2   | pwm        | +            | 10.74906063079834    |                             | 10111111111,90.91%          | 10111111011,81.82%          |                             | 11111111101,90.91%          |
+
+
+
+
+## Workflow Diagram
+[![maffin.jpg](https://i.postimg.cc/Kjqx7tCw/maffin.jpg)](https://postimg.cc/WqkBTqNw)
 
 ## Conservation Logic in MAFin
 
@@ -271,9 +288,59 @@ These coordinates, along with the similarity vector and conservation score, allo
 
 ## Reverse Complement Example
 
-<!-- It seems like this section title is present but no content is provided. You might want to add content here. -->
+Searcing for a motif on the reverse strand generally involves a search for the reverse complement of a sequence.
 
----
+### Searching reverse strand through Regex Patterns
+
+**Reference Sequence**: `ATCGGCA`
+**Regular Expression**: `C{2}G` ( Two times C followed by G )
+
+Due to the complex nature of Regex patterns reversing and complementing the expression is impossible. Thus we reverse and complement the reference sequence and then search for the pattern there.
+
+Reverse complement match of CCG in sequence: TG**CCG**AT , results in genomic coordinates 3,5:
+| 1 | 2 | 3 | 4   | 5 |6|7|
+|----------|----------|---------------|----------|--------|-|-|
+| T        | G        | **C**             | **C**    | **G**      |A|T
+
+
+### Searching reverse strand through K-mers
+
+**Reference Sequence**: `ATCGGCA`
+**K-mer**: `CCG`
+
+Searching for a K-mer on the reverse strand is way simpler. We just reverse complement the k-mer sequence and search for it on the existing strand
+
+**Reverse complement K-mer**: `CGG`
+
+Wich is found at genomic coordinates 3,5:  
+
+| 1 | 2 | 3 | 4   | 5 |6|7|
+|----------|----------|---------------|----------|--------|-|-|
+| A        | T        | **C**             | **G**    | **G**      |C|A
+
+### Searching reverse strand through PWMs (JASPAR format)
+
+**PWM**: 
+
+| Position   | 1   | 2   | 3   | 4   |
+|------------|-----|-----|-----|-----|
+| A          | 0.2 | 0.1 | 0.4 | 0.3 |
+| C          | 0.3 | 0.5 | 0.1 | 0.2 |
+| G          | 0.4 | 0.3 | 0.4 | 0.5 |
+| T          | 0.1 | 0.1 | 0.1 | 0.0 |
+
+To search for a motif on the reverse strand, the reverse complement of the PWM must be calculated. The reverse complement of the above PWM will be represented by reversing the order of the positions and replacing each nucleotide with its complement. Therefore, the reverse PWM becomes:
+
+
+Reverse PWM:
+| Position   | 4   | 3   | 2   | 1   |
+|------------|-----|-----|-----|-----|
+| A          | 0.0 | 0.1 | 0.5 | 0.2 |
+| C          | 0.2 | 0.1 | 0.5 | 0.3 |
+| G          | 0.5 | 0.4 | 0.3 | 0.4 |
+| T          | 0.3 | 0.4 | 0.1 | 0.1 |
+
+And the standard process of PWM search is followed afterwards. 
 
 ### Summary
 
