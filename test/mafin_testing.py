@@ -64,7 +64,7 @@ def test_regex_trivial():
 
 def test_kmer_trivial():
     # Run kmer test
-    args = ["--maf_file", MAF_FILE, "--kmers", KMERS_FILE, "--purge_results_dir"`]
+    args = ["--maf_file", MAF_FILE, "--kmers", KMERS_FILE, "--purge_results_dir"]
     run_maffin(args)
 
     # Assert the resulting JSON contains 6 entries

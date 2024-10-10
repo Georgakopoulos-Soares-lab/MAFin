@@ -1,7 +1,7 @@
 <!-- MAFin Logo -->
 ![Alt text](https://i.postimg.cc/V5QnxMWp/logo-no-background.png "")
 
-# MAFin: Tailoring Multiple Alignments for Individual Motif Discovery
+# MAFin: Tailoring Multiple Alignments for Motif Discovery
 
 ## Description
 
@@ -61,6 +61,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
     --processes: Number of parallel processes to use. Default is 1.
     --background_frequencies: Background nucleotide frequencies for A, C, G, T. They must sum to 1. ( defaults 0.25 0.25 0.25 0.25)
     --purge_results_dir: Purge the results directory before running the script.
+    
 ### Search Types (Mutually Exclusive)
 
     --regexes: Regex patterns to search for in the MAF file.
