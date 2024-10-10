@@ -123,35 +123,50 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
     Compute similarity vectors and conservation percentages for the given gapped positions,
     based on the gapped motif sequence.
     """
+    
+    
     vectors = {}
     aligned_sequences = []
     total_conservation = 0
     genomes_with_data = 0
     motif_length = len(ref_gapped_seq.replace('-', ''))  # True length of the motif (excluding gaps)
 
+ 
+
+    
     # Compute ungapped positions before motif start in reference genome
     ref_seq_gapped = str(ref_seq_record.seq)
     ref_strand = ref_seq_record.annotations.get('strand', '+')
     ref_start = int(ref_seq_record.annotations.get('start', 0))
     ref_size = int(ref_seq_record.annotations.get('size', 0))
+    
+    if ref_strand == -1:
+        ref_strand = '-'
+    elif ref_strand == 1:
+        ref_strand = '+'
 
     # Compute ungapped positions before motif start
     ungapped_positions_before_motif = len([c for c in ref_seq_gapped[:gapped_start] if c != '-'])
     motif_ungapped_length = len(ref_gapped_seq.replace('-', ''))
 
+   
+    genomic_start = ref_start + ungapped_positions_before_motif + 1
+    genomic_end = genomic_start + motif_ungapped_length - 1
     # Compute genomic start and end positions for reference genome
-    if ref_strand == '+':
-        genomic_start = ref_start + ungapped_positions_before_motif
-        genomic_end = genomic_start + motif_ungapped_length - 1
-    else:
-        genomic_end = ref_start + ref_size - ungapped_positions_before_motif
-        genomic_start = genomic_end - motif_ungapped_length + 1
+    # if ref_strand == '+':
+    #     genomic_start = ref_start + ungapped_positions_before_motif + 1
+    #     genomic_end = genomic_start + motif_ungapped_length - 1
+    # else:
+    #     genomic_end = ref_start + ref_size - ungapped_positions_before_motif
+    #     genomic_start = genomic_end - motif_ungapped_length + 1
 
     # Extract chromosome information
     ref_chromosome = '.'.join(ref_seq_record.id.split('.')[1:])  # Skip the genome ID
 
     for seq_record in block:
         genome_id = seq_record.id.split('.')[0]
+        if genome_id == ref_genome_id:
+            continue
         local_genome_names.add(genome_id)  # Collect genome IDs
         if genome_ids is None or genome_id in genome_ids:
             seq_gapped = str(seq_record.seq)
@@ -205,18 +220,27 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
             seq_id_parts = seq_record.id.split('.')
             seq_chromosome = '.'.join(seq_id_parts[1:])  # Skip the genome ID
 
+            if seq_strand == -1:
+                seq_strand = '-'
+            elif seq_strand == 1:
+                seq_strand = '+'
+
             # Compute ungapped positions before motif start in this genome
             seq_gapped_full = str(seq_record.seq)
             ungapped_positions_before_motif_seq = len([c for c in seq_gapped_full[:gapped_start] if c != '-'])
             motif_ungapped_length_seq = len(seq_gapped_fragment.replace('-', ''))
 
-            if seq_strand == '+':
-                seq_genomic_start = seq_start + ungapped_positions_before_motif_seq
-                seq_genomic_end = seq_genomic_start + motif_ungapped_length_seq - 1
-            else:
-                seq_genomic_end = seq_start + seq_size - ungapped_positions_before_motif_seq
-                seq_genomic_start = seq_genomic_end - motif_ungapped_length_seq + 1
+            seq_genomic_start = seq_start + ungapped_positions_before_motif_seq + 1
+            seq_genomic_end = seq_genomic_start + motif_ungapped_length_seq - 1
 
+            # if seq_strand == '+':
+            #     seq_genomic_start = seq_start + ungapped_positions_before_motif_seq + 1
+            #     seq_genomic_end = seq_genomic_start + motif_ungapped_length_seq - 1
+            # else:
+            #     seq_genomic_end = seq_start + seq_size - ungapped_positions_before_motif_seq
+            #     seq_genomic_start = seq_genomic_end - motif_ungapped_length_seq + 1
+
+            
             aligned_sequences.append({
                 "genome_id": genome_id,
                 "chromosome": seq_chromosome,
@@ -294,6 +318,7 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
 
             if search_type == 'pwm':
                 # PWM search
+              
                 for pwm_data in patterns:
                     pssm = pwm_data['pwm']
                     pwm_name = pwm_data['name']
@@ -308,14 +333,13 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
                         continue
 
                     # Search for hits using precomputed threshold
-                    hits = pssm.search(seq_ungapped_orig, threshold=threshold)
+                    hits = pssm.search(seq_ungapped_orig, threshold=threshold , both=False)
                     hits = list(hits)
 
                     for position, score in hits:
                         pos = position
                         # Get the matched sequence
                         ungapped_sequence = seq_ungapped_orig[pos:pos + m]
-
                         # Map ungapped positions to gapped positions
                         ungapped_to_gapped = [i for i, c in enumerate(seq_gapped_orig) if c != '-']
                         if pos + m - 1 >= len(ungapped_to_gapped):
@@ -342,7 +366,6 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
                         vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome = compute_vectors_and_conservation(
                             block, genome_ids, gapped_start, gapped_end, ref_gapped_seq, ref_genome_id, ref_seq_record, local_genome_names
                         )
-
                         # Collect motif hit data
                         motif_hit_data = {
                             "hit_id": f"pwm_{genome_id}_{motif_identifier}{hit_id_suffix}_{block_no}_{pos}",
@@ -355,14 +378,14 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
                             "motif_type": "pwm",
                             "motif_name": motif_identifier,
                             "motif_length": m,
-                            "motif": ungapped_sequence,
+                            "gapped_motif": gapped_sequence,
                             "gapped_start": gapped_start + 1,
                             "gapped_end": gapped_end,
+                            "motif": ungapped_sequence,
                             "ungapped_start": pos + 1,
                             "ungapped_end": pos + m,
                             "motif_strand": motif_strand,
                             "score": float(score),
-                            "false_positive_rate": None,
                             "conservation": {
                                 "value": float(conservation_value),
                                 "other_genomes": aligned_sequences
@@ -453,9 +476,10 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
                         "motif_type": "kmer",
                         "motif_name": original_kmer,
                         "motif_length": kmer_len,
-                        "motif": ungapped_sequence,
+                        "gapped_motif": gapped_sequence,
                         "gapped_start": gapped_start + 1,
                         "gapped_end": gapped_end,
+                        "motif": ungapped_sequence,
                         "ungapped_start": pos + 1,
                         "ungapped_end": pos + kmer_len,
                         "motif_strand": motif_strand,
@@ -500,6 +524,7 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
                     is_reverse_complement = regex_data['is_reverse_complement']
 
                     if is_reverse_complement:
+                        # seq_gapped_orig = str(Seq(seq_gapped_orig).reverse_complement())
                         sequence_to_search = str(Seq(seq_ungapped_orig).reverse_complement())
                         total_len = len(seq_ungapped_orig)
                         motif_strand = '-' if sequence_strand == '+' else '+'
@@ -552,11 +577,12 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
                             "motif_type": "regex",
                             "motif_name": regex_identifier,
                             "motif_length": match_len,
-                            "motif": ungapped_sequence,
+                            "gapped_motif": gapped_sequence,
                             "gapped_start": gapped_start + 1,
                             "gapped_end": gapped_end,
                             "ungapped_start": pos_in_original + 1,
                             "ungapped_end": pos_in_original + match_len,
+                            "motif": ungapped_sequence,
                             "motif_strand": motif_strand,
                             "conservation": {
                                 "value": float(conservation_value),
@@ -900,6 +926,7 @@ def main(args):
                                            'identifier': motif_identifier,
                                            'is_reverse_complement': True})
             patterns = pwm_motifs
+            
             logging.info(f"Loaded {len(patterns)} PWMs (including reverse complements).")
         except Exception as e:
             logging.error(f"Error loading PWMs from {args.jaspar_file}: {e}", exc_info=True)

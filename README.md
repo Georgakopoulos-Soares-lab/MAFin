@@ -13,7 +13,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 - **Flexible Genome Selection**: Choose to search within the reference genome or across all genomes.
 - **Strand Orientation**: Optionally search both strands by considering reverse complements.
 - **Parallel Processing**: Utilize multiple processes to speed up the search.
-- **Output Formats**: Generate detailed JSON reports of the motifs found.
+- **Output Formats**: Generate detailed JSON and CSV reports of the motifs found.
 
 ## Installation
 
@@ -21,7 +21,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 - Python 3.6 or higher
 - `pip` package manager
--  Biopython ( installed via requirements.txt )
+-  Biopython, pyahocorasick ( installed via requirements.txt )
 
 ### Using Virtual Environment
 
@@ -59,7 +59,8 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
     --reverse_complement: Specify whether to search motifs on both strands. Choices are 'yes' or 'no'. Default is 'no'.
     --pvalue_threshold: P-value threshold for PWM matches. Default is 1e-4.
     --processes: Number of parallel processes to use. Default is 1.
-
+    --background_frequencies: Background nucleotide frequencies for A, C, G, T. They must sum to 1. ( defaults 0.25 0.25 0.25 0.25)
+    --purge_results_dir: Purge the results directory before running the script.
 ### Search Types (Mutually Exclusive)
 
     --regexes: Regex patterns to search for in the MAF file.
@@ -78,7 +79,8 @@ python maf_motif_search.py --maf_file data/sample.maf \
                            --search_in all \
                            --reverse_complement yes \
                            --pvalue_threshold 0.001 \
-                           --processes 8
+                           --processes 8 \
+                           --purge_results_dir
 ```
 
 ### Searching with K-mers
@@ -87,6 +89,8 @@ python maf_motif_search.py --maf_file data/sample.maf \
                            --kmers data/kmers.txt \
                            --search_in reference \
                            --pvalue_threshold 1e-5 \
+                           --pvalue_threshold 1e-5 \
+                            --background_frequencies 0.25 0.15 0.35 0.25\
                            --processes 2
 ```
 
@@ -176,7 +180,7 @@ e.g. <b>11110110000,54.55%</b>
 
 
 ## Workflow Diagram
-[![maffin.jpg](https://i.postimg.cc/Kjqx7tCw/maffin.jpg)](https://postimg.cc/WqkBTqNw)
+[![maffin-drawio-1.png](https://i.postimg.cc/nLsbvLmz/maffin-drawio-1.png)](https://postimg.cc/Mc8Fwqd2)
 
 ## Conservation Logic in MAFin
 
