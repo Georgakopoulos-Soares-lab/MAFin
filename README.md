@@ -91,7 +91,7 @@ python maf_motif_search.py --maf_file data/sample.maf \
                            --search_in reference \
                            --pvalue_threshold 1e-5 \
                            --pvalue_threshold 1e-5 \
-                            --background_frequencies 0.25 0.15 0.35 0.25\
+                            --background_frequencies 0.25 0.15 0.35 0.25 \
                            --processes 2
 ```
 
