@@ -808,7 +808,34 @@ def purge_directory(directory):
     else:
         logging.info(f"{directory} does not exist.")
 
-def main(args):
+def main():
+
+    parser = argparse.ArgumentParser(description="Search uncompressed MAF files for specific motifs using regex patterns, K-mers, or PWMs.")
+
+    parser.add_argument('--maf_file', required=True, help="Path to the uncompressed MAF file.")
+    parser.add_argument('--genome_ids', help="Path to the genome IDs file (optional).")
+    parser.add_argument('--search_in', default='reference',
+                        help="Specify the genome to search motifs in (default: 'reference').")
+    parser.add_argument('--reverse_complement', choices=['yes', 'no'], default='no',
+                        help="Specify whether to search motifs on both strands.")
+    parser.add_argument('--pvalue_threshold', type=float, default=1e-4,
+                        help="P-value threshold for PWM matches. Default is 1e-4.")
+    parser.add_argument('--processes', type=int, default=1,
+                        help="Number of parallel processes to use. Default is 1.")
+    parser.add_argument('--background_frequencies', nargs=4, type=float,
+                    metavar=('A_FREQ', 'C_FREQ', 'G_FREQ', 'T_FREQ'),
+                    help="Background nucleotide frequencies for A, C, G, T. They must sum to 1.")
+    parser.add_argument('--purge_results_dir', action='store_true', help='Purge the results directory before running the script.')
+
+    # Mutually exclusive group for search types
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('--regexes', nargs='+', help="Regex patterns to search for in the MAF file.")
+    group.add_argument('--kmers', help="Path to the K-mers file (one per line).")
+    group.add_argument('--jaspar_file', help="Path to the PWM file in JASPAR format.")
+
+    args = parser.parse_args()
+
+
     logging.info("Starting processing.")
 
     maf_file = args.maf_file
@@ -965,30 +992,5 @@ def main(args):
     logging.info("Completed processing.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Search uncompressed MAF files for specific motifs using regex patterns, K-mers, or PWMs.")
-
-    parser.add_argument('--maf_file', required=True, help="Path to the uncompressed MAF file.")
-    parser.add_argument('--genome_ids', help="Path to the genome IDs file (optional).")
-    parser.add_argument('--search_in', default='reference',
-                        help="Specify the genome to search motifs in (default: 'reference').")
-    parser.add_argument('--reverse_complement', choices=['yes', 'no'], default='no',
-                        help="Specify whether to search motifs on both strands.")
-    parser.add_argument('--pvalue_threshold', type=float, default=1e-4,
-                        help="P-value threshold for PWM matches. Default is 1e-4.")
-    parser.add_argument('--processes', type=int, default=1,
-                        help="Number of parallel processes to use. Default is 1.")
-    parser.add_argument('--background_frequencies', nargs=4, type=float,
-                    metavar=('A_FREQ', 'C_FREQ', 'G_FREQ', 'T_FREQ'),
-                    help="Background nucleotide frequencies for A, C, G, T. They must sum to 1.")
-    parser.add_argument('--purge_results_dir', action='store_true', help='Purge the results directory before running the script.')
-
-    # Mutually exclusive group for search types
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('--regexes', nargs='+', help="Regex patterns to search for in the MAF file.")
-    group.add_argument('--kmers', help="Path to the K-mers file (one per line).")
-    group.add_argument('--jaspar_file', help="Path to the PWM file in JASPAR format.")
-
-    args = parser.parse_args()
-
-    main(args)
+    main()
 
