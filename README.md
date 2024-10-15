@@ -1,7 +1,7 @@
 <!-- MAFin Logo -->
 ![Alt text](https://i.postimg.cc/V5QnxMWp/logo-no-background.png "")
 
-# MAFin: Tailoring Multiple Alignments for Motif Discovery
+# MAFin: Motif Detection in Multiple Alignment Files
 
 ## Description
 
