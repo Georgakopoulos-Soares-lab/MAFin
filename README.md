@@ -28,21 +28,24 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 1. **Clone the Repository**
 
    ```bash
-   git clone https://github.com/yourusername/maf-motif-search.git
-   cd maf-motif-search
+   git clone https://github.com/Georgakopoulos-Soares-lab/MAFin
+   cd MAFin
     ```
 
-2. **Install inside venv**
+2. **Install package inside conda environment**
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
+   conda create -n mafin_env python=3.8
+   conda init && conda activate mafin_env
+   pip install -e .
    ```
-
+   or through PyPI without cloning
+   ```bash
+   pip install MAFin   
+   ```
 
 ## Usage
    ```bash
-   python maf_motif_search.py --maf_file path/to/file.maf \
+   MAFin --maf_file path/to/file.maf \
                            --regexes "CTGCCCGCA" "AGT" \
                            --search_in reference \
                            --reverse_complement no \
@@ -86,10 +89,9 @@ python maf_motif_search.py --maf_file data/sample.maf \
 
 ### Searching with K-mers
 ```bash
-python maf_motif_search.py --maf_file data/sample.maf \
+                  MAFin    --maf_file data/sample.maf \
                            --kmers data/kmers.txt \
                            --search_in reference \
-                           --pvalue_threshold 1e-5 \
                            --pvalue_threshold 1e-5 \
                             --background_frequencies 0.25 0.15 0.35 0.25 \
                            --processes 2
@@ -97,7 +99,7 @@ python maf_motif_search.py --maf_file data/sample.maf \
 
 ### Searching with PWM (JASPAR format)
 ```bash
-python maf_motif_search.py --maf_file data/sample.maf \
+                     MAFin --maf_file data/sample.maf \
                            --jaspar_file data/motif.jaspar \
                            --search_in all \
                            --processes 4
@@ -176,8 +178,6 @@ e.g. <b>11110110000,54.55%</b>
 | chr46:33765-33775,TAACCACAGAA | MA0002.2   | pwm        | +            | 11.518963813781738   | 11111111111,100.00%         |                             | 11111111011,90.91%          | 11111111111,100.00%         | 11011011110,72.73%          |
 | chr69:51945-51955,TGTTGTGGTTA | MA0002.2   | pwm        | +            | 10.343249320983887   | 11111111111,100.00%         |                             | 01111111111,90.91%          | 11111111111,100.00%         | 11111011110,81.82%          |
 | chr80:61982-61992,CAACCACAGGC | MA0002.2   | pwm        | +            | 10.74906063079834    |                             | 10111111111,90.91%          | 10111111011,81.82%          |                             | 11111111101,90.91%          |
-
-
 
 
 ## Workflow Diagram
@@ -317,7 +317,7 @@ Searching for a K-mer on the reverse strand is way simpler. We just reverse comp
 
 **Reverse complement K-mer**: `CGG`
 
-Wich is found at genomic coordinates 3,5:  
+Which is found at genomic coordinates 3,5:  
 
 | 1 | 2 | 3 | 4   | 5 |6|7|
 |----------|----------|---------------|----------|--------|-|-|
