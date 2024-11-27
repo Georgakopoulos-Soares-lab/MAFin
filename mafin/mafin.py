@@ -131,9 +131,6 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
     genomes_with_data = 0
     motif_length = len(ref_gapped_seq.replace('-', ''))  # True length of the motif (excluding gaps)
 
- 
-
-    
     # Compute ungapped positions before motif start in reference genome
     ref_seq_gapped = str(ref_seq_record.seq)
     ref_strand = ref_seq_record.annotations.get('strand', '+')
@@ -149,7 +146,6 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
     ungapped_positions_before_motif = len([c for c in ref_seq_gapped[:gapped_start] if c != '-'])
     motif_ungapped_length = len(ref_gapped_seq.replace('-', ''))
 
-   
     genomic_start = ref_start + ungapped_positions_before_motif + 1
     genomic_end = genomic_start + motif_ungapped_length - 1
     # Compute genomic start and end positions for reference genome
@@ -208,7 +204,6 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
 
             # Calculate conservation percentage
             conservation_pct = (matches / motif_length) * 100 if motif_length > 0 else 0.0
-
             if genome_id != ref_genome_id:
                 total_conservation += conservation_pct
                 genomes_with_data += 1
@@ -240,7 +235,6 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
             #     seq_genomic_end = seq_start + seq_size - ungapped_positions_before_motif_seq
             #     seq_genomic_start = seq_genomic_end - motif_ungapped_length_seq + 1
 
-            
             aligned_sequences.append({
                 "genome_id": genome_id,
                 "chromosome": seq_chromosome,
@@ -253,7 +247,6 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
                 "gapped_start": int(gapped_start + 1),
                 "gapped_end": int(gapped_end),
             })
-
             vectors[genome_id] = vector
 
     # Calculate average conservation value
@@ -276,7 +269,7 @@ def convert_numpy_types(obj):
     else:
         return obj
 
-def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no, search_in, genome_files, reverse_complement, process_id, local_genome_names, output_identifier):
+def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_no, search_in, genome_files, reverse_complement, process_id, local_genome_names, output_identifier):
     """Search for motifs in the sequences based on the specified search type."""
     try:
         # Determine the reference genome in this block
@@ -318,7 +311,6 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
 
             if search_type == 'pwm':
                 # PWM search
-              
                 for pwm_data in patterns:
                     pssm = pwm_data['pwm']
                     pwm_name = pwm_data['name']
@@ -327,7 +319,6 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
                     is_reverse_complement = pwm_data['is_reverse_complement']
 
                     m = pssm.length
-
                     # Ensure the sequence length is sufficient
                     if len(seq_ungapped_orig) < m:
                         continue
@@ -349,7 +340,6 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
 
                         # Extract gapped sequence
                         gapped_sequence = seq_gapped_orig[gapped_start:gapped_end]
-
                         # Determine motif strand
                         if is_reverse_complement:
                             motif_strand = '-' if sequence_strand == '+' else '+'
@@ -420,14 +410,7 @@ def search_patterns_in_block(block, search_type, patterns, genome_ids, block_no,
 
             elif search_type == 'kmer':
                 # K-mer search using Aho-Corasick algorithm
-                A = ahocorasick.Automaton()  # Updated to use 'ahocorasick'
-                for idx, kmer_data in enumerate(patterns):
-                    kmer = kmer_data['kmer']
-                    kmer_data['index'] = idx
-                    A.add_word(kmer, (idx, kmer_data))
-                A.make_automaton()
-
-                for end_index, (idx, kmer_data) in A.iter(seq_ungapped_orig):
+                for end_index, (_, kmer_data) in A.iter(seq_ungapped_orig):
                     start_index = end_index - len(kmer_data['kmer']) + 1
                     pos = start_index
                     kmer = kmer_data['kmer']
@@ -632,11 +615,24 @@ def write_motif_hit(genome_file, motif_hit_data):
     except Exception as e:
         logging.error(f"Error writing motif hit: {e}", exc_info=True)
 
+def _initialize_automaton(patterns):
+    A = ahocorasick.Automaton()  # Updated to use 'ahocorasick'
+    for idx, kmer_data in enumerate(patterns):
+        kmer = kmer_data['kmer']
+        kmer_data['index'] = idx
+        A.add_word(kmer, (idx, kmer_data))
+    A.make_automaton()
+    return A
+
 def process_file_chunk(maf_file, start_pos, end_pos, search_type, patterns, genome_ids, search_in, reverse_complement, process_id, unique_genome_names, output_identifier):
     """Process a chunk of the MAF file."""
     genome_files = {}
     block_no = 0  # Initialize block number
     local_genome_names = set()
+    if search_type == "kmer":
+        A = _initialize_automaton(patterns)
+    else:
+        A = None
 
     try:
         with open(maf_file, 'rb') as handle:
@@ -660,7 +656,7 @@ def process_file_chunk(maf_file, start_pos, end_pos, search_type, patterns, geno
                 block = parse_block_from_string(block_data)
                 if block:
                     # Search patterns in the block
-                    search_patterns_in_block(block, search_type, patterns, genome_ids, block_no, search_in, genome_files, reverse_complement, process_id, local_genome_names, output_identifier)
+                    search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_no, search_in, genome_files, reverse_complement, process_id, local_genome_names, output_identifier)
                 block_no += 1
     except Exception as e:
         logging.error(f"Error in process {process_id}: {e}", exc_info=True)
@@ -902,7 +898,7 @@ def main():
         output_identifier = kmers_file_name
         try:
             with open(args.kmers, 'r') as f:
-                kmers = [line.strip().upper() for line in f if line.strip()]
+                kmers = list(set([line.strip().upper() for line in f if line.strip()]))
             for kmer in kmers:
                 kmer_patterns.append({'kmer': kmer, 'identifier': kmer,
                                       'original_kmer': kmer, 'is_reverse_complement': False})
