@@ -22,19 +22,19 @@ increment_version() {
     fi
 }
 
-# Check if the Conda environment 'py36' exists using conda env list
-env_exists=$(conda env list | grep -w py36)
+# Check if the Conda environment 'py38_deployment_pypi' exists using conda env list
+env_exists=$(conda env list | grep -w py38_deployment_pypi)
 
 # If environment doesn't exist, create it
 if [ -z "$env_exists" ]; then
-    echo "Conda environment 'py36' not found. Creating a new environment..."
+    echo "Conda environment 'py38_deployment_pypi' not found. Creating a new environment..."
     
     # Create the environment with Python 3.8 and install required packages
-    conda create -n py36 python=3.6 -y
+    conda create -n py38_deployment_pypi python=3.8 -y
 
     # Check if the environment creation succeeded
     if [ $? -ne 0 ]; then
-        echo "Failed to create the Conda environment 'py36'. Exiting..."
+        echo "Failed to create the Conda environment 'py38_deployment_pypi'. Exiting..."
         exit 1
     fi
 fi
@@ -42,10 +42,10 @@ fi
 # Activate the Conda environment
 # Workaround for conda activate in non-interactive shells
 eval "$(conda shell.bash hook)"  # Properly initialize Conda's shell commands
-conda activate py36
+conda activate py38_deployment_pypi
 
 if [ $? -ne 0 ]; then
-    echo "Failed to activate the Conda environment 'py36'. Exiting..."
+    echo "Failed to activate the Conda environment 'py38_deployment_pypi'. Exiting..."
     exit 1
 fi
 

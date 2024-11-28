@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='MAFin',  # Package name
-    version='0.5',  # Version number
+    version='0.6',  # Version number
     description='Motif Detection in Multiple Alignment Files: CLI tool to process and analyze MAF files ( Multiple alignment format ) ',  # Short description
     long_description=open('README.md').read(),  # Full description from README.md
     long_description_content_type='text/markdown',  # Content type for long description
