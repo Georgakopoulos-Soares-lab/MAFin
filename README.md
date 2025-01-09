@@ -13,7 +13,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 - **Flexible Genome Selection**: Choose to search within the reference genome or across all genomes.
 - **Strand Orientation**: Optionally search both strands by considering reverse complements.
 - **Parallel Processing**: Utilize multiple processes to speed up the search.
-- **Output Formats**: Generate detailed JSON and CSV reports of the motifs found.
+- **Output Formats**: By  default BED format ( tab separated ) if --detailed_report is specified CSV and JSON analytical report also.
 
 ## Installation
 
@@ -51,19 +51,23 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
                            --reverse_complement no \
                            --pvalue_threshold 1e-4 \
                            --processes 4
+                           --detailed_report
    ```
 
 
 ### Command-Line Arguments
 
-    --maf_file: (Required) Path to the uncompressed MAF file.
-    --genome_ids: Path to the genome IDs file (optional). If not provided, all genomes are used.
-    --search_in: Specify whether to search motifs in the 'reference' genome or 'all' genomes. Default is 'reference'.
-    --reverse_complement: Specify whether to search motifs on both strands. Choices are 'yes' or 'no'. Default is 'no'.
+    maf_file: (Required) Path to the uncompressed MAF file.
+    --genome_ids: Path to the genome IDs file (optional).
+    --search_in: Genome in which to search motifs. Default is 'reference'.
+    --reverse_complement: Search motifs on both strands if 'yes'. Choices are 'yes' or 'no'. Default is 'no'.
     --pvalue_threshold: P-value threshold for PWM matches. Default is 1e-4.
     --processes: Number of parallel processes to use. Default is 1.
-    --background_frequencies: Background nucleotide frequencies for A, C, G, T. They must sum to 1. ( defaults 0.25 0.25 0.25 0.25)
-    --purge_results_dir: Purge the results directory before running the script.
+    --background_frequencies: Background nucleotide frequencies for A, C, G, T. They must sum to 1. (Specify as four space-separated floats: A_FREQ C_FREQ G_FREQ T_FREQ)
+    --purge_results_dir: Purge the 'tmp' directory before running.
+    --verbose, -v: Enable verbose logging to debug.log.
+    --detailed_report, -d: Generate merged JSON and CSV output in the current directory.
+
     
 ### Search Types (Mutually Exclusive)
 
@@ -78,9 +82,10 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 ### Searching with Regex Patterns
 ```bash
-python maf_motif_search.py --maf_file data/sample.maf \
+                  MAFin     data/sample.maf \
                            --regexes "CTG[CC]+CGCA" "AGT" \
                            --search_in all \
+                           --verbose \
                            --reverse_complement yes \
                            --pvalue_threshold 0.001 \
                            --processes 8 \
@@ -89,7 +94,7 @@ python maf_motif_search.py --maf_file data/sample.maf \
 
 ### Searching with K-mers
 ```bash
-                  MAFin    --maf_file data/sample.maf \
+                  MAFin     data/sample.maf \
                            --kmers data/kmers.txt \
                            --search_in reference \
                            --pvalue_threshold 1e-5 \
@@ -99,13 +104,30 @@ python maf_motif_search.py --maf_file data/sample.maf \
 
 ### Searching with PWM (JASPAR format)
 ```bash
-                     MAFin --maf_file data/sample.maf \
+                     MAFin  data/sample.maf \
                            --jaspar_file data/motif.jaspar \
                            --search_in all \
                            --processes 4
 ```
 
 ## Example Output
+
+### BED Output
+
+BED Format (.tsv) with columns start , end , motif , conservation , strand 
+
+```tsv
+3061    3064    ACGT    100.0   +
+3420    3423    ACGT    75.0    +
+4919    4922    ACGT    50.0    +
+5399    5402    ACGT    25.0    +
+6068    6071    ACGT    75.0    +
+6797    6800    ACGT    100.0   +
+7012    7015    ACGT    75.0    +
+7019    7022    ACGT    100.0   +
+7218    7221    ACGT    75.0    +
+7996    7999    ACGT    25.0    +
+```
 
 ### JSON Output
 
