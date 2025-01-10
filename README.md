@@ -45,7 +45,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 ## Usage
    ```bash
-   MAFin --maf_file path/to/file.maf \
+   MAFin       path/to/file.maf \
                            --regexes "CTGCCCGCA" "AGT" \
                            --search_in reference \
                            --reverse_complement no \
@@ -82,7 +82,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 ### Searching with Regex Patterns
 ```bash
-                  MAFin     data/sample.maf \
+                  MAFin     path/to/file.maf \
                            --regexes "CTG[CC]+CGCA" "AGT" \
                            --search_in all \
                            --verbose \
@@ -94,7 +94,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 ### Searching with K-mers
 ```bash
-                  MAFin     data/sample.maf \
+                  MAFin     path/to/file.maf \
                            --kmers data/kmers.txt \
                            --search_in reference \
                            --pvalue_threshold 1e-5 \
@@ -104,7 +104,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 ### Searching with PWM (JASPAR format)
 ```bash
-                     MAFin  data/sample.maf \
+                     MAFin  path/to/file.maf \
                            --jaspar_file data/motif.jaspar \
                            --search_in all \
                            --processes 4
@@ -148,7 +148,6 @@ After running the tool, a JSON file is generated containing detailed information
     "motifs": [
         {
             "hit_id": "pssm_THAP1_1",
-            "block_no": 433,
             "motif_type": "pssm",
             "motif_length": 9,
             "motif": "CTGCCCGCA",
@@ -282,7 +281,7 @@ Now, let’s look at a more complex case where gaps and mismatches occur between
 **Motif**: `ATCG`
 
 **Reference Genome**: `A - T C G`  
-**Compared Genome**: `A T - C G`
+**Compared Genome**: `A C - C G`
 
 Here, the sequences differ, with gaps in different positions. MAFin will again compare the ungapped bases to produce a similarity vector of length 4 (the length of the motif).
 
@@ -291,7 +290,7 @@ Here, the sequences differ, with gaps in different positions. MAFin will again c
 | Position | Ref Base | Compared Base | Result   | Vector |
 |----------|----------|---------------|----------|--------|
 | 1        | A        | A             | Match    | 1      |
-| 2        | -        | T             | Mismatch | 0      |
+| 2        | -        | C             | Mismatch | 0      |
 | 3        | T        | -             | Mismatch | 0      |
 | 4        | C        | C             | Match    | 1      |
 | 5        | G        | G             | Match    | 1      |
@@ -362,10 +361,10 @@ To search for a motif on the reverse strand, the reverse complement of the PWM m
 Reverse PWM:
 | Position   | 4   | 3   | 2   | 1   |
 |------------|-----|-----|-----|-----|
-| A          | 0.0 | 0.1 | 0.5 | 0.2 |
-| C          | 0.2 | 0.1 | 0.5 | 0.3 |
-| G          | 0.5 | 0.4 | 0.3 | 0.4 |
-| T          | 0.3 | 0.4 | 0.1 | 0.1 |
+| A          | 0.0 | 0.1 | 0.1 | 0.1 |
+| C          | 0.5 | 0.4 | 0.3 | 0.4 |
+| G          | 0.2 | 0.1 | 0.5 | 0.3 |
+| T          | 0.3 | 0.2 | 0.1 | 0.4 |
 
 And the standard process of PWM search is followed afterwards. 
 
