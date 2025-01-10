@@ -200,6 +200,9 @@ e.g. <b>11110110000,54.55%</b>
 | chr69:51945-51955,TGTTGTGGTTA | MA0002.2   | pwm        | +            | 10.343249320983887   | 11111111111,100.00%         |                             | 01111111111,90.91%          | 11111111111,100.00%         | 11111011110,81.82%          |
 | chr80:61982-61992,CAACCACAGGC | MA0002.2   | pwm        | +            | 10.74906063079834    |                             | 10111111111,90.91%          | 10111111011,81.82%          |                             | 11111111101,90.91%          |
 
+### TMP Directory
+
+To faciliate the parallel processing workflow a temporary directory called tmp is created in the current working directory where the script is run. This directory holds intermediate.tmp files required for the generation of the final output. These files are always equal to the number of workers so there is no possibility of inode resource exhaustion.
 
 ## Workflow Diagram
 [![maffin-drawio-1.png](https://i.postimg.cc/nLsbvLmz/maffin-drawio-1.png)](https://postimg.cc/Mc8Fwqd2)
