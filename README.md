@@ -206,7 +206,7 @@ e.g. <b>11110110000,54.55%</b>
 To faciliate the parallel processing workflow a temporary directory called tmp is created in the current working directory where the script is run. This directory holds intermediate.tmp files required for the generation of the final output. These files are always equal to the number of workers so there is no possibility of inode resource exhaustion.
 
 ## Workflow Diagram
-[![maffin-drawio-1.png](https://i.postimg.cc/nLsbvLmz/maffin-drawio-1.png)](https://postimg.cc/Mc8Fwqd2)
+[![maffin-drawio.png](https://i.postimg.cc/FKX2zdhF/maffin-drawio.png)](https://postimg.cc/gx4MB0w1)
 
 ## Conservation Logic in MAFin
 
