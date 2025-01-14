@@ -98,8 +98,8 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
                            --kmers data/kmers.txt \
                            --search_in reference \
                            --pvalue_threshold 1e-5 \
-                            --background_frequencies 0.25 0.15 0.35 0.25 \
-                           --processes 2
+                           --processes 2 \
+                           --detailed_report
 ```
 
 ### Searching with PWM (JASPAR format)
@@ -107,6 +107,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
                      MAFin  path/to/file.maf \
                            --jaspar_file data/motif.jaspar \
                            --search_in all \
+                           --background_frequencies 0.25 0.15 0.35 0.25 \
                            --processes 4
 ```
 
@@ -114,19 +115,19 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 
 ### BED Output
 
-BED Format (.tsv) with columns start , end , motif , conservation , strand 
+BED Format (.tsv) with columns chromosome, start , end , motif , conservation , strand 
 
 ```tsv
-3061    3064    ACGT    100.0   +
-3420    3423    ACGT    75.0    +
-4919    4922    ACGT    50.0    +
-5399    5402    ACGT    25.0    +
-6068    6071    ACGT    75.0    +
-6797    6800    ACGT    100.0   +
-7012    7015    ACGT    75.0    +
-7019    7022    ACGT    100.0   +
-7218    7221    ACGT    75.0    +
-7996    7999    ACGT    25.0    +
+chr 1   3061    3064    ACGT    100.0   +
+chr 1   3420    3423    ACGT    75.0    +
+chr 2   4919    4922    ACGT    50.0    +
+chr 1   5399    5402    ACGT    25.0    +
+chr 3   6068    6071    ACGT    75.0    +
+chr 1   6797    6800    ACGT    100.0   +
+chr 5   7012    7015    ACGT    75.0    +
+chr 2   7019    7022    ACGT    100.0   +
+chr 2   7218    7221    ACGT    75.0    +
+chr 4   7996    7999    ACGT    25.0    +
 ```
 
 ### JSON Output
