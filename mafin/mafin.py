@@ -288,10 +288,12 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
             sequences_to_search = [seq for seq in block if seq.id.split('.')[0] == genome_to_search]
             if not sequences_to_search:
                 logger.debug(f"No sequences found for genome {genome_to_search} in block {block_no}.")
+                return
 
-        ref_genome_id = ref_seq_record.id.split('.')[0]
+       
 
         for seq_record in sequences_to_search:
+            ref_genome_id = seq_record.id.split('.')[0]
             genome_id = seq_record.id.split('.')[0]
             local_genome_names.add(genome_id)
 
