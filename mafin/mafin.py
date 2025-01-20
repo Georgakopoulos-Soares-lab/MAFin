@@ -278,17 +278,27 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
     """Search for motifs in the sequences based on the specified search type."""
     try:
         # Determine the reference genome in this block
-        ref_seq_record = block[0]
-        local_genome_names.add(ref_seq_record.id.split('.')[0])
+  
 
         if search_in == 'reference':
+            ref_seq_record = block[0]
+            local_genome_names.add(ref_seq_record.id.split('.')[0])
             sequences_to_search = [ref_seq_record]
         else:
+            # If user gave a specific genome X, we find that in the block
             genome_to_search = search_in
-            sequences_to_search = [seq for seq in block if seq.id.split('.')[0] == genome_to_search]
-            if not sequences_to_search:
+            found_records = [seq for seq in block if seq.id.split('.')[0] == genome_to_search]
+            if not found_records:
                 logger.debug(f"No sequences found for genome {genome_to_search} in block {block_no}.")
-                return
+                return  # skip this block entirely
+
+            # Now pick that as the reference
+            ref_seq_record = found_records[0]
+            ref_genome_id = ref_seq_record.id.split('.')[0]
+            local_genome_names.add(ref_genome_id)
+
+            # We also only want to search in that record
+            sequences_to_search = [ref_seq_record]
 
        
 
