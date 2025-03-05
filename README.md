@@ -49,8 +49,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
                            --regexes "CTGCCCGCA" "AGT" \
                            --search_in reference \
                            --reverse_complement no \
-                           --pvalue_threshold 1e-4 \
-                           --processes 4
+                           --processes 4 \
                            --detailed_report
    ```
 
@@ -87,7 +86,6 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
                            --search_in all \
                            --verbose \
                            --reverse_complement yes \
-                           --pvalue_threshold 0.001 \
                            --processes 8 \
                            --purge_results_dir
 ```
@@ -97,7 +95,6 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
                   MAFin     path/to/file.maf \
                            --kmers data/kmers.txt \
                            --search_in reference \
-                           --pvalue_threshold 1e-5 \
                            --processes 2 \
                            --detailed_report
 ```
@@ -107,6 +104,7 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
                      MAFin  path/to/file.maf \
                            --jaspar_file data/motif.jaspar \
                            --search_in all \
+                           --pvalue_threshold 1e-5 \
                            --background_frequencies 0.25 0.15 0.35 0.25 \
                            --processes 4
 ```
