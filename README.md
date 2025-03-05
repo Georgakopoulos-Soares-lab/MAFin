@@ -118,16 +118,12 @@ This CLI tool allows you to search MAF (Multiple Alignment Format) files for spe
 BED Format (.tsv) with columns chromosome, start , end , motif , conservation , strand 
 
 ```tsv
-chr 1   3061    3064    ACGT    100.0   +
-chr 1   3420    3423    ACGT    75.0    +
-chr 2   4919    4922    ACGT    50.0    +
-chr 1   5399    5402    ACGT    25.0    +
-chr 3   6068    6071    ACGT    75.0    +
-chr 1   6797    6800    ACGT    100.0   +
-chr 5   7012    7015    ACGT    75.0    +
-chr 2   7019    7022    ACGT    100.0   +
-chr 2   7218    7221    ACGT    75.0    +
-chr 4   7996    7999    ACGT    25.0    +
+chr14	10685	10701	ATGCATGCATGCATGC	99.11	+
+chr24	19318	19334	TTTTTTTTTTTTTTTT	90.18	+
+chr24	19458	19474	ATGCATGCATGCATGC	99.11	+
+chr29	25671	25687	AAAATTTTGGGGCCCC	100.0	+
+chr29	26421	26437	TTTTTTTTTTTTTTTT	85.71	+
+chr29	24945	24961	AAAATTTTGGGGCCCC	100.0	+
 ```
 
 ### JSON Output
@@ -208,7 +204,7 @@ To faciliate the parallel processing workflow a temporary directory called tmp i
 ## Workflow Diagram
 [![maffin-drawio.png](https://i.postimg.cc/FKX2zdhF/maffin-drawio.png)](https://postimg.cc/gx4MB0w1)
 
-## Conservation Logic in MAFin
+## Finding conserved motifs with MAFin
 
 MAFin is a tool that helps identify conserved motifs across multiple genomes by comparing aligned sequences in MAF files. These motifs can be found using one of three methods:
 
@@ -220,99 +216,59 @@ In the following examples, we will assume the motif being searched for is `ATCG`
 
 ### Conservation Process
 
-Once the motif has been found, MAFin calculates the conservation across aligned sequences. The process is based on comparing the **ungapped sequences** within the alignment, while still respecting the gaps in the MAF file to maintain the alignment structure. The comparison results in a **similarity vector** that matches the true length of the motif, excluding positions where both the reference and compared sequences have gaps.
+Once the motif has been found, MAFin calculates the conservation across aligned sequences. The process is based on comparing the **ungapped sequences** within the alignment, while still respecting the gaps in the MAF file to maintain the alignment structure. The comparison results in a **similarity vector** and the following rules are followed to compute it:
+For each aligned pair of characters: 
+- If both are gaps, ignore that position. 
+- If the reference is a gap, record a “–”. 
+- If the reference is not a gap and matches the compared character, record a “1”. 
+- If the reference is not a gap and does not match the compared character (including when the compared character is a gap), record a “0”.
+
 
 The conservation logic also includes calculating a **conservation percentage**, which tells us how conserved the motif is across genomes, based on the number of matches relative to the length of the motif.
 
-### Conservation Logic Rules
 
-1. **Gap in Both Sequences (Skip)**:
-   - If both the reference genome and the compared genome have a gap at the same position, we skip this position.
-
-2. **Match (1)**:
-   - If both genomes have the same base pair at the position, it's considered a match, and we mark it as `1`.
-
-3. **Mismatch (0)**:
-   - If one genome has a gap and the other has a base, or if the bases are different, it is considered a mismatch, and we mark it as `0`.
-
-### Conservation Score Calculation
-
-The conservation percentage is calculated based on the number of matches relative to the length of the motif (excluding positions where both sequences have gaps). The formula for conservation is:
 
 <!-- You might want to add the actual formula here if it's missing -->
 
-### Simple Case Example: Matching Sequences
+Example 1: Conservation logic  
+The example covers all edge cases when applying the conservation logic algorithm between a pair of sequences.
 
-Let’s start with a simple example where the motif `ATCG` is found in both the reference genome and the compared genome with identical alignment and gaps.
+**Motif:** ATCGAC
 
-**Motif**: `ATCG`
+**Reference Genome:** A   –  T  C  G  A  –  C  
+**Compared Genome:** A   G  T  G  –  A  –  C
 
-**Reference Genome**: `A - T C G`  
-**Compared Genome**:  `A - T C G`
-
-In this case, the sequences are exactly the same, with gaps aligned in the same positions. MAFin will compare the ungapped bases to maintain the alignment structure.
-
-**Step-by-Step Comparison**:
-
-| Position | Ref Base | Compared Base | Result | Vector |
-|----------|----------|---------------|--------|--------|
-| 1        | A        | A             | Match  | 1      |
-| 2        | -        | -             | Skip   |        |
-| 3        | T        | T             | Match  | 1      |
-| 4        | C        | C             | Match  | 1      |
-| 5        | G        | G             | Match  | 1      |
-
-**Similarity Vector**:  
-Since we skip the gap in position 2, the resulting similarity vector has a length of 4, matching the true length of the motif (`ATCG`):
-
-<!-- You might want to include the actual similarity vector here if it's missing -->
-
-**Conservation Percentage**:  
-The total positions compared (excluding gaps) is 4, and all of them are matches. Therefore, the conservation score is: 100%
-
-<!-- You might want to include the actual conservation percentage calculation here if it's missing -->
-
-### Genomic Coordinates for Matches
-
-Along with the similarity vector, MAFin provides the genomic coordinates of the motif. If the motif starts at position 1000 in the reference genome and spans 4 ungapped bases (`A T C G`), the start and end positions would be: start: 1000, end:1003
-
-MAFin provides these coordinates for the motif in both the reference genome and the aligned genomes.
-
-### Example 2: Mismatched Sequences with Gaps
-
-Now, let’s look at a more complex case where gaps and mismatches occur between the reference and compared sequences.
-
-**Motif**: `ATCG`
-
-**Reference Genome**: `A - T C G`  
-**Compared Genome**: `A C - C G`
-
-Here, the sequences differ, with gaps in different positions. MAFin will again compare the ungapped bases to produce a similarity vector of length 4 (the length of the motif).
-
-**Step-by-Step Comparison**:
-
-| Position | Ref Base | Compared Base | Result   | Vector |
-|----------|----------|---------------|----------|--------|
-| 1        | A        | A             | Match    | 1      |
-| 2        | -        | C             | Mismatch | 0      |
-| 3        | T        | -             | Mismatch | 0      |
-| 4        | C        | C             | Match    | 1      |
-| 5        | G        | G             | Match    | 1      |
-
-**Similarity Vector**:  
-Again, we skip the gap in position 2 of the reference sequence, and the resulting similarity vector still has a length of 4: [1,0,0,1]. Note here that the last element is missing.
+For each aligned pair of characters: 
+- If both are gaps, ignore that position. 
+- If the reference is a gap and is compared to a character, we record a “–” in the conservation vector.
+- If the reference is not a gap and matches the compared character, record a “1”, for matching.
+- If the reference is not a gap and does not match the compared character (including when the compared character is a gap), record a “0”, for a mismatch.
 
 
-**Conservation Percentage**:  
-The total positions compared (excluding gaps) is 4, and 2 out of 4 positions are matches. Therefore, the conservation score is: 50%
+**Step-by-Step Comparison:**
+| **Position**   | 1   | 2   | 3   | 4         | 5         | 6   | 7    | 8   |
+|----------------|-----|-----|-----|-----------|-----------|-----|------|-----|
+| **Ref Base**   | A   | -   | T   | C         | G         | A   | -    | C   |
+| **Cmp Base**   | A   | G   | T   | G         | -         | A   | -    | C   |
+| **Result**     | Match | Gap | Match | Mismatch | Mismatch | Match | Skip | Match |
+| **Vector**     | 1   | -   | 1   | 0         | 0         | 1   |     | 1   |
 
-<!-- You might want to include the actual conservation percentage calculation here if it's missing -->
+**Similarity Vector:**  
+Positions 1, 3, 6, and 8 yield a “1” (match). Positions 4 and 5 yield a “0” (mismatches), and position 2 is recorded as “–” (gap–nucleotide). The gap–gap at position 7 is skipped. Thus, the resulting similarity vector is:  
+[1, –, 1, 0, 0, 1, 1]
 
-### Genomic Coordinates for Matches and Mismatches
+**Conservation Percentage:**  
+Here, the vector length is 7 (position 7 is skipped), and the number of matches (i.e. “1”s) is 4. Therefore, the conservation score is computed as:  
+Conservation = (4/7) × 100% ≈ 57.14%
 
-As with the first example, MAFin provides genomic coordinates for the motif. If the motif starts at position 1000 in the reference genome and spans 4 ungapped positions, the coordinates are: start:1000, end:1003
+**Genome Coordinates for Example:**  
+In addition to the similarity vector, MAFin supplies the genomic coordinates of the motif. Consider the example above (using 0-indexed coordinates): after comparing the sequences (where gaps in both sequences are skipped), the ungapped reference motif is: A, T, C, G, A, C (a total of 6 bases). If this motif begins at position 1000 (0-indexed) in the reference genome, then its genomic coordinates are reported as:  
+**Start:** 1000, **End:** 1005
+<br>
+> [<b>!IMPORTANT</b>]  
+> The <b>End</b> coordinate on <b>BED</b> output files is non inclusive meaning the coordinates above translate to  **Start:** 1000, **End:** 1006
 
-These coordinates, along with the similarity vector and conservation score, allow users to easily trace the conserved motifs across genomes.
+
 
 ---
 

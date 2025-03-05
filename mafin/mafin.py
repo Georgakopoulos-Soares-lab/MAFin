@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import sys
 import re
 import argparse
@@ -17,7 +19,6 @@ import ahocorasick  # Updated import statement
 
 # We'll configure logging dynamically based on --verbose
 logger = logging.getLogger(__name__)
-
 
 # Set random seed for reproducibility
 random.seed(42)
@@ -146,17 +147,28 @@ def generate_random_sequence(length, background):
     return Seq(''.join(random.choices(nucleotides, frequencies, k=length)))
 
 
-def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end,
-                                     ref_gapped_seq, ref_genome_id, ref_seq_record, local_genome_names):
+def compute_vectors_and_conservation(block,
+                                     genome_ids,
+                                     gapped_start,
+                                     gapped_end,
+                                     ref_gapped_seq,
+                                     ref_genome_id,
+                                     ref_seq_record,
+                                     local_genome_names):
     """
     Compute similarity vectors and conservation percentages for the given gapped positions,
-    based on the gapped motif sequence.
+    based on the *new* logic:
+    1) If both reference and other have '-' at position i, skip (do not add to vector).
+    2) If one is '-' and the other is not, add '-' to the vector (treated as a mismatch).
+    3) If both are not '-', add '1' if they match, '0' otherwise.
+    4) conservation = (# of '1') / (length_of_vector) * 100, if length_of_vector > 0,
+       else 0.0.
     """
+
     vectors = {}
     aligned_sequences = []
-    total_conservation = 0
+    total_conservation = 0.0
     genomes_with_data = 0
-    motif_length = len(ref_gapped_seq.replace('-', ''))
 
     ref_seq_gapped = str(ref_seq_record.seq)
     ref_strand = ref_seq_record.annotations.get('strand', '+')
@@ -168,10 +180,11 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
     elif ref_strand == 1:
         ref_strand = '+'
 
+    # We keep it 0-based inclusive
     ungapped_positions_before_motif = len([c for c in ref_seq_gapped[:gapped_start] if c != '-'])
     motif_ungapped_length = len(ref_gapped_seq.replace('-', ''))
 
-    genomic_start = ref_start + ungapped_positions_before_motif + 1
+    genomic_start = ref_start + ungapped_positions_before_motif
     genomic_end = genomic_start + motif_ungapped_length - 1
 
     ref_chromosome = '.'.join(ref_seq_record.id.split('.')[1:])  # Skip the genome ID
@@ -181,79 +194,97 @@ def compute_vectors_and_conservation(block, genome_ids, gapped_start, gapped_end
         if genome_id == ref_genome_id:
             continue
         local_genome_names.add(genome_id)
-        if genome_ids is None or genome_id in genome_ids:
-            seq_gapped = str(seq_record.seq)
-            seq_gapped_fragment = seq_gapped[gapped_start:gapped_end]
 
-            vector = ''
-            matches = 0
-            positions_processed = 0
+        # If a list of genome_ids was specified, only process those
+        if genome_ids is not None and genome_id not in genome_ids:
+            continue
 
-            ref_seq_fragment = ref_gapped_seq
-            seq_seq_fragment = seq_gapped_fragment
+        seq_gapped = str(seq_record.seq)
+        seq_gapped_fragment = seq_gapped[gapped_start:gapped_end]
 
-            i = 0
-            while positions_processed < motif_length and i < len(ref_seq_fragment):
-                ref_base = ref_seq_fragment[i]
-                seq_base = seq_seq_fragment[i] if i < len(seq_seq_fragment) else '-'
+        # Build the vector with the new logic
+        vector_list = []
+        matches = 0  # count of '1'
+        # Compare ref_gapped_seq to seq_gapped_fragment, position by position
+        # They should have the same length: (gapped_end - gapped_start) for each
+        for i in range(len(ref_gapped_seq)):
+            rbase = ref_gapped_seq[i]
+            obase = seq_gapped_fragment[i] if i < len(seq_gapped_fragment) else '-'
 
-                if ref_base == '-' and seq_base == '-':
-                    i += 1
-                    continue
+            # 1) If both are '-': skip entirely
+            if rbase == '-' and obase == '-':
+                continue
+
+            # 2) If one is '-' and the other is not, add '-'
+            elif rbase == '-' and obase != '-':
+                vector_list.append('-')
+
+            elif rbase != '-' and obase == '-':
+                vector_list.append('-')
+
+            # 3) If both are not '-'
+            else:
+                if rbase.upper() == obase.upper():
+                    vector_list.append('1')
+                    matches += 1
                 else:
-                    if ref_base == seq_base:
-                        vector += '1'
-                        matches += 1
-                    else:
-                        vector += '0'
-                    positions_processed += 1
-                    i += 1
+                    vector_list.append('0')
 
-            if len(vector) < motif_length:
-                zeros_to_add = motif_length - len(vector)
-                vector += '0' * zeros_to_add
+        vector_str = ''.join(vector_list)
+        vector_length = len(vector_list)
 
-            conservation_pct = (matches / motif_length) * 100 if motif_length > 0 else 0.0
-            total_conservation += conservation_pct
-            genomes_with_data += 1
+        if vector_length == 0:
+            # No positions to compare, so skip
+            continue
 
-            seq_strand = seq_record.annotations.get('strand', '+')
-            seq_start = int(seq_record.annotations.get('start', 0))
-            seq_size = int(seq_record.annotations.get('size', 0))
-            seq_id_parts = seq_record.id.split('.')
-            seq_chromosome = '.'.join(seq_id_parts[1:])
+        # # of matches is 'matches', denominator is vector_length
+        conservation_pct = (matches / vector_length) * 100.0
 
-            if seq_strand == -1:
-                seq_strand = '-'
-            elif seq_strand == 1:
-                seq_strand = '+'
+        total_conservation += conservation_pct
+        genomes_with_data += 1
 
-            seq_gapped_full = str(seq_record.seq)
-            ungapped_positions_before_motif_seq = len([c for c in seq_gapped_full[:gapped_start] if c != '-'])
-            motif_ungapped_length_seq = len(seq_gapped_fragment.replace('-', ''))
+        seq_strand = seq_record.annotations.get('strand', '+')
+        seq_start = int(seq_record.annotations.get('start', 0))
+        seq_size = int(seq_record.annotations.get('size', 0))
+        seq_id_parts = seq_record.id.split('.')
+        seq_chromosome = '.'.join(seq_id_parts[1:])
 
-            seq_genomic_start = seq_start + ungapped_positions_before_motif_seq + 1
-            seq_genomic_end = seq_genomic_start + motif_ungapped_length_seq - 1
+        if seq_strand == -1:
+            seq_strand = '-'
+        elif seq_strand == 1:
+            seq_strand = '+'
 
-            aligned_sequences.append({
-                "genome_id": genome_id,
-                "chromosome": seq_chromosome,
-                "genomic_start": seq_genomic_start,
-                "genomic_end": seq_genomic_end,
-                "strand": seq_strand,
-                "aligned_sequence_gapped": seq_gapped_fragment,
-                "vector": vector,
-                "conservation": f"{conservation_pct:.2f}%",
-                "gapped_start": int(gapped_start + 1),
-                "gapped_end": int(gapped_end),
-            })
-            vectors[genome_id] = vector
+        # Also compute the "genomic" start/end for this sequence
+        seq_gapped_full = str(seq_record.seq)
+        ungapped_positions_before_motif_seq = len([c for c in seq_gapped_full[:gapped_start] if c != '-'])
+        motif_ungapped_length_seq = len(seq_gapped_fragment.replace('-', ''))
 
-    conservation_value = (total_conservation / genomes_with_data) if genomes_with_data > 0 else 0.0
-    # Round to two decimal places
-    conservation_value = round(conservation_value, 2)
+        seq_genomic_start = seq_start + ungapped_positions_before_motif_seq
+        seq_genomic_end = seq_genomic_start + motif_ungapped_length_seq - 1
 
-    return vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome
+        aligned_sequences.append({
+            "genome_id": genome_id,
+            "chromosome": seq_chromosome,
+            "genomic_start": seq_genomic_start,
+            "genomic_end": seq_genomic_end,
+            "strand": seq_strand,
+            "aligned_sequence_gapped": seq_gapped_fragment,
+            "vector": vector_str,
+            "conservation": f"{conservation_pct:.2f}%",
+            "gapped_start": gapped_start,
+            "gapped_end": gapped_end - 1,
+        })
+        vectors[genome_id] = vector_str
+
+    if genomes_with_data > 0:
+        # Average conservation across all compared genomes
+        avg_conservation_value = total_conservation / genomes_with_data
+    else:
+        avg_conservation_value = 0.0
+
+    avg_conservation_value = round(avg_conservation_value, 2)
+
+    return vectors, avg_conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome
 
 
 def convert_numpy_types(obj):
@@ -272,14 +303,20 @@ def convert_numpy_types(obj):
         return obj
 
 
-def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_no, search_in,
-                             genome_files, reverse_complement, process_id, local_genome_names,
+def search_patterns_in_block(block,
+                             search_type,
+                             A,
+                             patterns,
+                             genome_ids,
+                             block_no,
+                             search_in,
+                             genome_files,
+                             reverse_complement,
+                             process_id,
+                             local_genome_names,
                              output_identifier):
     """Search for motifs in the sequences based on the specified search type."""
     try:
-        # Determine the reference genome in this block
-  
-
         if search_in == 'reference':
             ref_seq_record = block[0]
             local_genome_names.add(ref_seq_record.id.split('.')[0])
@@ -292,15 +329,10 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                 logger.debug(f"No sequences found for genome {genome_to_search} in block {block_no}.")
                 return  # skip this block entirely
 
-            # Now pick that as the reference
             ref_seq_record = found_records[0]
             ref_genome_id = ref_seq_record.id.split('.')[0]
             local_genome_names.add(ref_genome_id)
-
-            # We also only want to search in that record
             sequences_to_search = [ref_seq_record]
-
-       
 
         for seq_record in sequences_to_search:
             ref_genome_id = seq_record.id.split('.')[0]
@@ -335,18 +367,19 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                     hits = list(hits)
 
                     for position, score in hits:
-                        # Round the score to two decimals
                         score = round(float(score), 2)
-
                         pos = position
                         ungapped_sequence = seq_ungapped_orig[pos:pos + m]
+
                         ungapped_to_gapped = [i for i, c in enumerate(seq_gapped) if c != '-']
                         if pos + m - 1 >= len(ungapped_to_gapped):
                             continue
+                        # 0-based inclusive
                         gapped_start = ungapped_to_gapped[pos]
-                        gapped_end = ungapped_to_gapped[pos + m - 1] + 1
+                        gapped_end = ungapped_to_gapped[pos + m - 1]
 
-                        gapped_sequence = seq_gapped[gapped_start:gapped_end]
+                        gapped_sequence = seq_gapped[gapped_start:gapped_end + 1]
+
                         if is_rc:
                             motif_strand = '-' if sequence_strand == '+' else '+'
                             hit_id_suffix = '_rc'
@@ -355,10 +388,16 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                             hit_id_suffix = ''
 
                         ref_seq_gapped = str(ref_seq_record.seq)
-                        ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end]
+                        ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end + 1]
 
                         vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome = compute_vectors_and_conservation(
-                            block, genome_ids, gapped_start, gapped_end, ref_gapped_seq, ref_genome_id, ref_seq_record,
+                            block,
+                            genome_ids,
+                            gapped_start,
+                            gapped_end + 1,
+                            ref_gapped_seq,
+                            ref_genome_id,
+                            ref_seq_record,
                             local_genome_names
                         )
 
@@ -373,11 +412,11 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                             "motif_name": motif_identifier,
                             "motif_length": m,
                             "gapped_motif": gapped_sequence,
-                            "gapped_start": gapped_start + 1,
+                            "gapped_start": gapped_start,
                             "gapped_end": gapped_end,
                             "motif": ungapped_sequence,
-                            "ungapped_start": pos + 1,
-                            "ungapped_end": pos + m,
+                            "ungapped_start": pos,
+                            "ungapped_end": pos + m - 1,
                             "motif_strand": motif_strand,
                             "score": float(score),
                             "conservation": {
@@ -392,14 +431,16 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                         if key not in genome_files:
                             genome_dir = os.path.join('tmp', genome_id)
                             os.makedirs(genome_dir, exist_ok=True)
-                            output_file = os.path.join(genome_dir,
+                            output_file = os.path.join(
+                                genome_dir,
                                 f'{output_identifier}_{motif_identifier}_motif_hits_process_{process_id}.tmp'
                             )
                             try:
                                 genome_file = open(output_file, 'a')
                                 genome_files[key] = genome_file
                                 logger.info(
-                                    f"Process {process_id}: Created output file for genome {genome_id}, PWM {motif_identifier}"
+                                    f"Process {process_id}: Created output file for genome {genome_id}, "
+                                    f"PWM {motif_identifier}"
                                 )
                             except Exception as e:
                                 logger.error(
@@ -409,7 +450,6 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                                 continue
 
                         genome_file = genome_files[key]
-
                         try:
                             json.dump(motif_hit_data_converted, genome_file)
                             genome_file.write('\n')
@@ -430,10 +470,12 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                     ungapped_to_gapped = [i for i, c in enumerate(seq_gapped) if c != '-']
                     if pos + kmer_len - 1 >= len(ungapped_to_gapped):
                         continue
-                    gapped_start = ungapped_to_gapped[pos]
-                    gapped_end = ungapped_to_gapped[pos + kmer_len - 1] + 1
 
-                    gapped_sequence = seq_gapped[gapped_start:gapped_end]
+                    gapped_start = ungapped_to_gapped[pos]
+                    gapped_end = ungapped_to_gapped[pos + kmer_len - 1]
+
+                    gapped_sequence = seq_gapped[gapped_start:gapped_end + 1]
+
                     if is_rc:
                         motif_strand = '-' if sequence_strand == '+' else '+'
                         hit_id_suffix = '_rc'
@@ -442,10 +484,16 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                         hit_id_suffix = ''
 
                     ref_seq_gapped = str(ref_seq_record.seq)
-                    ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end]
+                    ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end + 1]
 
                     vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome = compute_vectors_and_conservation(
-                        block, genome_ids, gapped_start, gapped_end, ref_gapped_seq, ref_genome_id, ref_seq_record,
+                        block,
+                        genome_ids,
+                        gapped_start,
+                        gapped_end + 1,
+                        ref_gapped_seq,
+                        ref_genome_id,
+                        ref_seq_record,
                         local_genome_names
                     )
 
@@ -460,11 +508,11 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                         "motif_name": original_kmer,
                         "motif_length": kmer_len,
                         "gapped_motif": gapped_sequence,
-                        "gapped_start": gapped_start + 1,
+                        "gapped_start": gapped_start,
                         "gapped_end": gapped_end,
                         "motif": ungapped_sequence,
-                        "ungapped_start": pos + 1,
-                        "ungapped_end": pos + kmer_len,
+                        "ungapped_start": pos,
+                        "ungapped_end": pos + kmer_len - 1,
                         "motif_strand": motif_strand,
                         "conservation": {
                             "value": float(round(conservation_value, 2)),
@@ -478,8 +526,10 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                     if key not in genome_files:
                         genome_dir = os.path.join('tmp', genome_id)
                         os.makedirs(genome_dir, exist_ok=True)
-                        output_file = os.path.join(genome_dir,
-                                                   f'{output_identifier}_motif_hits_process_{process_id}.tmp')
+                        output_file = os.path.join(
+                            genome_dir,
+                            f'{output_identifier}_motif_hits_process_{process_id}.tmp'
+                        )
                         try:
                             genome_file = open(output_file, 'a')
                             genome_files[key] = genome_file
@@ -490,7 +540,6 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                             continue
 
                     genome_file = genome_files[key]
-
                     try:
                         json.dump(motif_hit_data_converted, genome_file)
                         genome_file.write('\n')
@@ -530,15 +579,21 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                         if pos_in_original + match_len - 1 >= len(ungapped_to_gapped):
                             continue
                         gapped_start = ungapped_to_gapped[pos_in_original]
-                        gapped_end = ungapped_to_gapped[pos_in_original + match_len - 1] + 1
+                        gapped_end = ungapped_to_gapped[pos_in_original + match_len - 1]
 
-                        gapped_sequence = seq_gapped[gapped_start:gapped_end]
+                        gapped_sequence = seq_gapped[gapped_start:gapped_end + 1]
 
                         ref_seq_gapped = str(ref_seq_record.seq)
-                        ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end]
+                        ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end + 1]
 
                         vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome = compute_vectors_and_conservation(
-                            block, genome_ids, gapped_start, gapped_end, ref_gapped_seq, ref_genome_id, ref_seq_record,
+                            block,
+                            genome_ids,
+                            gapped_start,
+                            gapped_end + 1,
+                            ref_gapped_seq,
+                            ref_genome_id,
+                            ref_seq_record,
                             local_genome_names
                         )
 
@@ -553,10 +608,10 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                             "motif_name": regex_identifier,
                             "motif_length": match_len,
                             "gapped_motif": gapped_sequence,
-                            "gapped_start": gapped_start + 1,
+                            "gapped_start": gapped_start,
                             "gapped_end": gapped_end,
-                            "ungapped_start": pos_in_original + 1,
-                            "ungapped_end": pos_in_original + match_len,
+                            "ungapped_start": pos_in_original,
+                            "ungapped_end": pos_in_original + match_len - 1,
                             "motif": ungapped_sequence,
                             "motif_strand": motif_strand,
                             "conservation": {
@@ -579,7 +634,8 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                                 genome_file = open(output_file, 'a')
                                 genome_files[key] = genome_file
                                 logger.info(
-                                    f"Process {process_id}: Created output file for genome {genome_id}, regex {regex_identifier}"
+                                    f"Process {process_id}: Created output file for genome {genome_id}, "
+                                    f"regex {regex_identifier}"
                                 )
                             except Exception as e:
                                 logger.error(
@@ -589,7 +645,6 @@ def search_patterns_in_block(block, search_type, A, patterns, genome_ids, block_
                                 continue
 
                         genome_file = genome_files[key]
-
                         try:
                             json.dump(motif_hit_data_converted, genome_file)
                             genome_file.write('\n')
@@ -615,6 +670,7 @@ def write_motif_hit(genome_file, motif_hit_data):
 
 
 def _initialize_automaton(patterns):
+    """Initialize an Aho-Corasick automaton for k-mer searching."""
     A = ahocorasick.Automaton()
     for idx, kmer_data in enumerate(patterns):
         kmer = kmer_data['kmer']
@@ -624,8 +680,16 @@ def _initialize_automaton(patterns):
     return A
 
 
-def process_file_chunk(maf_file, start_pos, end_pos, search_type, patterns, genome_ids,
-                       search_in, reverse_complement, process_id, unique_genome_names,
+def process_file_chunk(maf_file,
+                       start_pos,
+                       end_pos,
+                       search_type,
+                       patterns,
+                       genome_ids,
+                       search_in,
+                       reverse_complement,
+                       process_id,
+                       unique_genome_names,
                        output_identifier):
     """Process a chunk of the MAF file and write results to .tmp files."""
     genome_files = {}
@@ -698,6 +762,8 @@ def generate_bed(tmp_dir, bed_filename):
     Parse all .tmp files in tmp_dir, collect motif hits,
     and write them to a single BED (TSV) file with columns:
     chrom, chromStart, chromEnd, name, score, strand
+
+    Coordinates remain 0-based inclusive.
     """
     bed_entries = []
     # Recursively find all .tmp files
@@ -713,20 +779,21 @@ def generate_bed(tmp_dir, bed_filename):
                                 continue
                             try:
                                 data = json.loads(line)
-                                # Build bed line
                                 chrom = data.get('chromosome', 'unknown')
-                                chrom_start = data.get('genomic_start', 0)
-                                chrom_end = data.get('genomic_end', 0)
+                                chrom_start = data.get('genomic_start', 0)  # 0-based inclusive
+                                chrom_end = data.get('genomic_end', 0)+1    # 0-based non inclusive (open)
                                 name = data.get('motif_name', 'motif')
-                                # Round score to 2 decimals
                                 score_val = data.get('conservation', {}).get('value', 0.0)
                                 if isinstance(score_val, (float, int)):
                                     score_val = round(score_val, 2)
                                 else:
                                     score_val = 0.0
                                 strand = data.get('strand', '+')
-                                # Make a BED line (tab-separated)
-                                bed_entries.append(f"{chrom}\t{chrom_start}\t{chrom_end}\t{name}\t{score_val}\t{strand}")
+
+                                # Write to BED file
+                                bed_entries.append(
+                                    f"{chrom}\t{chrom_start}\t{chrom_end}\t{name}\t{score_val}\t{strand}"
+                                )
                             except json.JSONDecodeError:
                                 logger.error(f"Invalid JSON in {tmp_file_path}")
                 except Exception as e:
@@ -812,6 +879,8 @@ def generate_csv(all_merged_data, unique_genome_names, output_identifier):
     Generate CSV files if --detailed_report is used.
     We have the dictionary from merge_results: {(genome_id, motif_identifier): [hits]}
     Write them in current directory as genomeID_outputIdentifier_motifID_motif_hits.csv
+
+    Coordinates in the CSV are also 0-based inclusive.
     """
     if not all_merged_data:
         logger.info("No merged data found; skipping CSV generation.")
@@ -836,13 +905,15 @@ def generate_csv(all_merged_data, unique_genome_names, output_identifier):
                 writer.writeheader()
 
                 for hit_id, motif_hit in all_motif_hits.items():
-                    motif_hit_info = f"{motif_hit['chromosome']}:{motif_hit['genomic_start']}-{motif_hit['genomic_end']},{motif_hit['motif']}"
+                    motif_hit_info = (
+                        f"{motif_hit['chromosome']}:{motif_hit['genomic_start']}-{motif_hit['genomic_end']},"
+                        f"{motif_hit['motif']}"
+                    )
                     row = {
                         'motif_hit_info': motif_hit_info,
                         'motif_name': motif_hit['motif_name'],
                         'motif_type': motif_hit['motif_type'],
                         'motif_strand': motif_hit['motif_strand'],
-                        # Round the score to two decimals
                         'score': round(motif_hit.get('conservation', {}).get('value', 0.0), 2),
                     }
                     for gname in unique_genome_names:
@@ -904,8 +975,6 @@ def main():
     args = parser.parse_args()
 
     # Configure logging based on --verbose
-    # By default: only CRITICAL messages (effectively silent),
-    # If verbose: write logs at INFO level to debug.log
     if args.verbose:
         logging.basicConfig(
             level=logging.INFO,
