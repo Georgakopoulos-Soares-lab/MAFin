@@ -215,12 +215,13 @@ def compute_vectors_and_conservation(block,
             if rbase == '-' and obase == '-':
                 continue
 
-            # 2) If one is '-' and the other is not, add '-'
+            # 2a) If ref base is '-' and the other is not, add '-' to denote gap in motif
             elif rbase == '-' and obase != '-':
                 vector_list.append('-')
-
+            
+            # 2b) If ref base is not '-' and the other is '-', add 0 to denote mismatch
             elif rbase != '-' and obase == '-':
-                vector_list.append('-')
+                vector_list.append('0')
 
             # 3) If both are not '-'
             else:
