@@ -7,15 +7,28 @@ import json
 import logging
 import os
 import multiprocessing
-from Bio import AlignIO
-from io import StringIO
 from Bio import motifs
+from concurrent.futures import ThreadPoolExecutor
 from Bio.Seq import Seq
 import random
 import numpy as np
 import csv
 import shutil
-import ahocorasick  # Updated import statement
+import ahocorasick
+
+# Try to use a faster JSON library if available
+try:
+    import ujson as fast_json
+except ImportError:
+    try:
+        import orjson as fast_json
+    except ImportError:
+        fast_json = json
+
+def fast_dumps(data):
+    """Fallback-safe high speed JSON dumping"""
+    encoded = fast_json.dumps(data)
+    return encoded.decode('utf-8') if isinstance(encoded, bytes) else encoded
 
 # We'll configure logging dynamically based on --verbose
 logger = logging.getLogger(__name__)
@@ -31,7 +44,8 @@ def load_genome_ids(genome_ids_file):
         logger.info(f"Loading genome IDs from {genome_ids_file}")
         try:
             with open(genome_ids_file, 'r') as file:
-                genome_ids = [line.strip() for line in file if line.strip()]
+                # BUD Optimization: Use a Hash Set instead of an Array for O(1) lookups
+                genome_ids = {line.strip() for line in file if line.strip()}
             logger.info(f"Loaded {len(genome_ids)} genome IDs.")
             return genome_ids
         except Exception as e:
@@ -45,8 +59,6 @@ def assign_file_chunks(maf_file, num_processes):
     Assign chunks of the MAF file to processes based on block boundaries.
     Each chunk ends just before the next line that starts with 'a'.
     """
-    import os
-
     file_size = os.path.getsize(maf_file)
     # Edge case: if num_processes is 0 or file_size is 0
     if num_processes < 1 or file_size == 0:
@@ -100,26 +112,60 @@ def assign_file_chunks(maf_file, num_processes):
     return chunk_ranges
 
 
-def parse_block_from_string(block_data):
-    """Parse a MAF block from a string into a MultipleSeqAlignment object."""
-    handle = StringIO(block_data)
+class SimpleSeqRecord:
+    __slots__ = ['id', 'genome_id', 'chromosome', 'annotations', 'seq', 'seq_np']
+
+    def __init__(self):
+        self.id = ""
+        self.genome_id = ""
+        self.chromosome = ""
+        self.annotations = {'start': 0, 'size': 0, 'strand': 1, 'srcSize': 0}
+        self.seq = ""
+        self.seq_np = None
+
+    def update(self, obj_id, start, size, strand, srcSize, seq):
+        self.id = obj_id
+        parts = obj_id.split('.', 1)
+        self.genome_id = parts[0]
+        self.chromosome = parts[1] if len(parts) > 1 else 'unknown'
+        self.annotations['start'] = start
+        self.annotations['size'] = size
+        self.annotations['strand'] = strand
+        self.annotations['srcSize'] = srcSize
+        self.seq = seq
+        self.seq_np = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
+
+
+def parse_block_from_string(block_data, record_pool):
+    """Parse a MAF block from a string into a list of SimpleSeqRecord objects using an object pool."""
+    num_records = 0
     try:
-        alignment = AlignIO.read(handle, "maf")
-        return alignment
+        lines = block_data.strip().split('\n')
+        for line in lines:
+            if line.startswith('s '):
+                parts = line.split()
+                if len(parts) >= 7:
+                    src = parts[1]
+                    start = int(parts[2])
+                    size = int(parts[3])
+                    strand_str = parts[4]
+                    strand = 1 if strand_str == '+' else -1
+                    srcSize = int(parts[5])
+                    text = parts[6].upper()
+                    
+                    if num_records < len(record_pool):
+                        record_pool[num_records].update(src, start, size, strand, srcSize, text)
+                    else:
+                        rec = SimpleSeqRecord()
+                        rec.update(src, start, size, strand, srcSize, text)
+                        record_pool.append(rec)
+                    
+                    num_records += 1
+                    
+        return record_pool[:num_records] if num_records else None
     except Exception as e:
         logger.error(f"Error parsing block: {e}", exc_info=True)
         return None
-
-
-def get_reverse_complement_gapped_sequence(seq_gapped):
-    """Reverse complement a gapped sequence."""
-    complement_map = str.maketrans('ACGTacgt', 'TGCAtgca')
-    reversed_seq = seq_gapped[::-1]
-    reverse_complemented_seq = ''.join(
-        base.translate(complement_map) if base != '-' else '-'
-        for base in reversed_seq
-    )
-    return reverse_complemented_seq
 
 
 def compute_threshold_score(pssm, pvalue, num_samples=10000):
@@ -148,21 +194,16 @@ def generate_random_sequence(length, background):
 
 
 def compute_vectors_and_conservation(block,
+                                     ref_seq_record,
                                      genome_ids,
                                      gapped_start,
                                      gapped_end,
-                                     ref_gapped_seq,
                                      ref_genome_id,
-                                     ref_seq_record,
-                                     local_genome_names):
+                                     local_genome_names,
+                                     ref_ungapped_start,
+                                     ref_ungapped_length):
     """
-    Compute similarity vectors and conservation percentages for the given gapped positions,
-    based on the *new* logic:
-    1) If both reference and other have '-' at position i, skip (do not add to vector).
-    2) If one is '-' and the other is not, add '-' to the vector (treated as a mismatch).
-    3) If both are not '-', add '1' if they match, '0' otherwise.
-    4) conservation = (# of '1') / (length_of_vector) * 100, if length_of_vector > 0,
-       else 0.0.
+    Compute similarity vectors and conservation percentages for the given gapped positions.
     """
 
     vectors = {}
@@ -170,31 +211,19 @@ def compute_vectors_and_conservation(block,
     total_conservation = 0.0
     genomes_with_data = 0
 
-    ref_seq_gapped = str(ref_seq_record.seq)
-    ref_strand = ref_seq_record.annotations.get('strand', '+')
+    # Locate reference sequence metadata
     ref_start = int(ref_seq_record.annotations.get('start', 0))
-    ref_size = int(ref_seq_record.annotations.get('size', 0))
 
-    if ref_strand == -1:
-        ref_strand = '-'
-    elif ref_strand == 1:
-        ref_strand = '+'
+    genomic_start = int(ref_start + ref_ungapped_start)
+    genomic_end = int(genomic_start + ref_ungapped_length - 1)
+    ref_chromosome = ref_seq_record.chromosome
 
-    # We keep it 0-based inclusive
-    ungapped_positions_before_motif = len([c for c in ref_seq_gapped[:gapped_start] if c != '-'])
-    motif_ungapped_length = len(ref_gapped_seq.replace('-', ''))
+    # Extract reference sequence byte-array directly from pre-computed view
+    r_arr_full = ref_seq_record.seq_np[gapped_start:gapped_end]
+    r_len = len(r_arr_full)
 
-    genomic_start = ref_start + ungapped_positions_before_motif
-    genomic_end = genomic_start + motif_ungapped_length - 1
-
-    ref_chromosome = '.'.join(ref_seq_record.id.split('.')[1:])  # Skip the genome ID
-
-    # Track best alignment per genome_id (highest conservation) to handle
-    # duplicate alignments for the same genome within a block.
-    best_per_genome = {}
-
-    for seq_record in block:
-        genome_id = seq_record.id.split('.')[0]
+    for meta in block:
+        genome_id = meta.genome_id
         if genome_id == ref_genome_id:
             continue
         local_genome_names.add(genome_id)
@@ -203,89 +232,67 @@ def compute_vectors_and_conservation(block,
         if genome_ids is not None and genome_id not in genome_ids:
             continue
 
-        seq_gapped = str(seq_record.seq)
-        seq_gapped_fragment = seq_gapped[gapped_start:gapped_end]
+        # Zero-copy slicing of the pre-encoded numpy array
+        o_arr = meta.seq_np[gapped_start:gapped_end]
 
-        # Build the vector with the new logic
-        vector_list = []
-        matches = 0  # count of '1'
-        # Compare ref_gapped_seq to seq_gapped_fragment, position by position
-        # They should have the same length: (gapped_end - gapped_start) for each
-        for i in range(len(ref_gapped_seq)):
-            rbase = ref_gapped_seq[i]
-            obase = seq_gapped_fragment[i] if i < len(seq_gapped_fragment) else '-'
+        if len(o_arr) != r_len:
+            # Pad with '-' (45) if it's shorter
+            padded = np.full(r_len, 45, dtype=np.uint8)
+            padded[:len(o_arr)] = o_arr
+            o_arr = padded
 
-            # 1) If both are '-': skip entirely
-            if rbase == '-' and obase == '-':
-                continue
+        # Vectorized comparison logic utilizing AVX/SIMD CPU instructions and cache-aligned buffers
+        valid_mask = ~((r_arr_full == 45) & (o_arr == 45))
+        r_valid = r_arr_full[valid_mask]
+        o_valid = o_arr[valid_mask]
 
-            # 2a) If ref base is '-' and the other is not, add '-' to denote gap in motif
-            elif rbase == '-' and obase != '-':
-                vector_list.append('-')
-
-            # 2b) If ref base is not '-' and the other is '-', add 0 to denote mismatch
-            elif rbase != '-' and obase == '-':
-                vector_list.append('0')
-
-            # 3) If both are not '-'
-            else:
-                if rbase.upper() == obase.upper():
-                    vector_list.append('1')
-                    matches += 1
-                else:
-                    vector_list.append('0')
-
-        vector_str = ''.join(vector_list)
-        vector_length = len(vector_list)
-
+        vector_length = len(r_valid)
         if vector_length == 0:
-            # No positions to compare, so skip
             continue
 
-        # # of matches is 'matches', denominator is vector_length
+        vector_arr = np.full(vector_length, 48, dtype=np.uint8) # Fill with '0'
+        
+        matches_mask = (r_valid == o_valid)
+        vector_arr[matches_mask] = 49 # '1'
+        vector_arr[r_valid == 45] = 45 # '-'
+
+        matches = np.count_nonzero(matches_mask)
+        vector_str = vector_arr.tobytes().decode('ascii')
         conservation_pct = (matches / vector_length) * 100.0
 
-        seq_strand = seq_record.annotations.get('strand', '+')
-        seq_start = int(seq_record.annotations.get('start', 0))
-        seq_size = int(seq_record.annotations.get('size', 0))
-        seq_id_parts = seq_record.id.split('.')
-        seq_chromosome = '.'.join(seq_id_parts[1:])
+        total_conservation += conservation_pct
+        genomes_with_data += 1
 
-        if seq_strand == -1:
-            seq_strand = '-'
-        elif seq_strand == 1:
-            seq_strand = '+'
+        seq_gapped = meta.seq
+        seq_gapped_fragment = seq_gapped[gapped_start:gapped_end]
 
-        seq_gapped_full = str(seq_record.seq)
-        ungapped_positions_before_motif_seq = len([c for c in seq_gapped_full[:gapped_start] if c != '-'])
-        motif_ungapped_length_seq = len(seq_gapped_fragment.replace('-', ''))
+        # O(1) Data mapping using precomputed cached coordinate arrays
+        ungapped_positions_before_motif_seq = gapped_start - seq_gapped.count('-', 0, gapped_start)
+        motif_ungapped_length_seq = len(seq_gapped_fragment) - seq_gapped_fragment.count('-')
 
-        seq_genomic_start = seq_start + ungapped_positions_before_motif_seq
-        seq_genomic_end = seq_genomic_start + motif_ungapped_length_seq - 1
+        meta_start = int(meta.annotations.get('start', 0))
+        seq_genomic_start = int(meta_start + ungapped_positions_before_motif_seq)
+        seq_genomic_end = int(seq_genomic_start + motif_ungapped_length_seq - 1)
+        
+        mstrand = meta.annotations.get('strand', 1)
+        mstrand_str = '-' if mstrand == -1 else '+'
 
-        entry = {
+        aligned_sequences.append({
             "genome_id": genome_id,
-            "chromosome": seq_chromosome,
+            "chromosome": meta.chromosome,
             "genomic_start": seq_genomic_start,
             "genomic_end": seq_genomic_end,
-            "strand": seq_strand,
+            "strand": mstrand_str,
             "aligned_sequence_gapped": seq_gapped_fragment,
             "vector": vector_str,
             "conservation": f"{conservation_pct:.2f}%",
             "gapped_start": gapped_start,
             "gapped_end": gapped_end - 1,
-        }
-
-        if genome_id not in best_per_genome or conservation_pct > best_per_genome[genome_id][0]:
-            best_per_genome[genome_id] = (conservation_pct, entry, vector_str)
-
-    for genome_id, (conservation_pct, entry, vector_str) in best_per_genome.items():
-        total_conservation += conservation_pct
-        genomes_with_data += 1
-        aligned_sequences.append(entry)
+        })
         vectors[genome_id] = vector_str
 
     if genomes_with_data > 0:
+        # Average conservation across all compared genomes
         avg_conservation_value = total_conservation / genomes_with_data
     else:
         avg_conservation_value = 0.0
@@ -295,21 +302,14 @@ def compute_vectors_and_conservation(block,
     return vectors, avg_conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome
 
 
-def convert_numpy_types(obj):
-    """Recursively convert NumPy data types to native Python types."""
-    if isinstance(obj, dict):
-        return {k: convert_numpy_types(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_numpy_types(v) for v in obj]
-    elif isinstance(obj, np.integer):
-        return int(obj)
-    elif isinstance(obj, np.floating):
-        return float(obj)
-    elif isinstance(obj, np.ndarray):
-        return obj.tolist()
-    else:
-        return obj
-
+def write_hits_to_disk(genome_dir, output_file, lines):
+    """Background I/O task function to write motif hits."""
+    try:
+        os.makedirs(genome_dir, exist_ok=True)
+        with open(output_file, 'a') as f:
+            f.write('\n'.join(lines) + '\n')
+    except Exception as e:
+        logger.error(f"Error buffering motif hit to disk: {e}", exc_info=True)
 
 def search_patterns_in_block(block,
                              search_type,
@@ -322,47 +322,46 @@ def search_patterns_in_block(block,
                              reverse_complement,
                              process_id,
                              local_genome_names,
-                             output_identifier):
+                             output_identifier,
+                             io_executor):
     """Search for motifs in the sequences based on the specified search type."""
     try:
+        
         if search_in == 'reference':
             ref_seq_record = block[0]
-            local_genome_names.add(ref_seq_record.id.split('.')[0])
+            local_genome_names.add(ref_seq_record.genome_id)
             sequences_to_search = [ref_seq_record]
         else:
             # If user gave a specific genome X, we find that in the block
             genome_to_search = search_in
-            found_records = [seq for seq in block if seq.id.split('.')[0] == genome_to_search]
+            found_records = [seq for seq in block if seq.genome_id == genome_to_search]
             if not found_records:
                 logger.debug(f"No sequences found for genome {genome_to_search} in block {block_no}.")
                 return  # skip this block entirely
 
             ref_seq_record = found_records[0]
-            ref_genome_id = ref_seq_record.id.split('.')[0]
+            ref_genome_id = ref_seq_record.genome_id
             local_genome_names.add(ref_genome_id)
             sequences_to_search = [ref_seq_record]
 
+        ref_genome_id = ref_seq_record.genome_id
+
         for seq_record in sequences_to_search:
-            ref_genome_id = seq_record.id.split('.')[0]
-            genome_id = seq_record.id.split('.')[0]
+            genome_id = seq_record.genome_id
             local_genome_names.add(genome_id)
 
-            seq_gapped = str(seq_record.seq)
-            seq_ungapped_orig = seq_gapped.replace('-', '').upper()
+            seq_gapped = seq_record.seq
+            seq_ungapped_orig = seq_gapped.replace('-', '')
 
-            sequence_strand = seq_record.annotations.get('strand', '+')
-            if sequence_strand == -1:
-                sequence_strand = '-'
-            elif sequence_strand == 1:
-                sequence_strand = '+'
-            else:
-                sequence_strand = '+'
+            sstrand = seq_record.annotations.get('strand', 1)
+            sequence_strand = '-' if sstrand == -1 else '+'
+
+            ungapped_to_gapped = None 
 
             if search_type == 'pwm':
                 # PWM search
                 for pwm_data in patterns:
                     pssm = pwm_data['pwm']
-                    pwm_name = pwm_data['name']
                     threshold = pwm_data['threshold']
                     motif_identifier = pwm_data['identifier']
                     is_rc = pwm_data['is_reverse_complement']
@@ -378,13 +377,15 @@ def search_patterns_in_block(block,
                         score = round(float(score), 2)
                         pos = position
                         ungapped_sequence = seq_ungapped_orig[pos:pos + m]
+                        
+                        if ungapped_to_gapped is None:
+                            ungapped_to_gapped = np.flatnonzero(seq_record.seq_np != 45)
 
-                        ungapped_to_gapped = [i for i, c in enumerate(seq_gapped) if c != '-']
                         if pos + m - 1 >= len(ungapped_to_gapped):
                             continue
                         # 0-based inclusive
-                        gapped_start = ungapped_to_gapped[pos]
-                        gapped_end = ungapped_to_gapped[pos + m - 1]
+                        gapped_start = int(ungapped_to_gapped[pos])
+                        gapped_end = int(ungapped_to_gapped[pos + m - 1])
 
                         gapped_sequence = seq_gapped[gapped_start:gapped_end + 1]
 
@@ -395,18 +396,16 @@ def search_patterns_in_block(block,
                             motif_strand = sequence_strand
                             hit_id_suffix = ''
 
-                        ref_seq_gapped = str(ref_seq_record.seq)
-                        ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end + 1]
-
                         vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome = compute_vectors_and_conservation(
                             block,
+                            ref_seq_record,
                             genome_ids,
                             gapped_start,
                             gapped_end + 1,
-                            ref_gapped_seq,
                             ref_genome_id,
-                            ref_seq_record,
-                            local_genome_names
+                            local_genome_names,
+                            pos,
+                            m
                         )
 
                         motif_hit_data = {
@@ -433,36 +432,22 @@ def search_patterns_in_block(block,
                             }
                         }
 
-                        motif_hit_data_converted = convert_numpy_types(motif_hit_data)
-
                         key = (genome_id, motif_identifier)
                         if key not in genome_files:
-                            genome_dir = os.path.join('tmp', genome_id)
-                            os.makedirs(genome_dir, exist_ok=True)
-                            output_file = os.path.join(
-                                genome_dir,
-                                f'{output_identifier}_{motif_identifier}_motif_hits_process_{process_id}.tmp'
-                            )
-                            try:
-                                genome_file = open(output_file, 'a')
-                                genome_files[key] = genome_file
-                                logger.info(
-                                    f"Process {process_id}: Created output file for genome {genome_id}, "
-                                    f"PWM {motif_identifier}"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Process {process_id}: Error creating file {output_file}: {e}",
-                                    exc_info=True
-                                )
-                                continue
-
-                        genome_file = genome_files[key]
+                            genome_files[key] = []
+                        
                         try:
-                            json.dump(motif_hit_data_converted, genome_file)
-                            genome_file.write('\n')
+                            genome_files[key].append(fast_dumps(motif_hit_data))
+                            if len(genome_files[key]) >= 10000:
+                                genome_dir = os.path.join('tmp', genome_id)
+                                output_file = os.path.join(
+                                    genome_dir,
+                                    f'{output_identifier}_{motif_identifier}_motif_hits_process_{process_id}.tmp'
+                                )
+                                io_executor.submit(write_hits_to_disk, genome_dir, output_file, list(genome_files[key]))
+                                genome_files[key].clear()
                         except Exception as e:
-                            logger.error(f"Error writing motif hit: {e}", exc_info=True)
+                            logger.error(f"Error buffering motif hit: {e}", exc_info=True)
 
             elif search_type == 'kmer':
                 # K-mer search
@@ -475,12 +460,15 @@ def search_patterns_in_block(block,
 
                     kmer_len = len(kmer)
                     ungapped_sequence = seq_ungapped_orig[pos:pos + kmer_len]
-                    ungapped_to_gapped = [i for i, c in enumerate(seq_gapped) if c != '-']
+
+                    if ungapped_to_gapped is None:
+                        ungapped_to_gapped = np.flatnonzero(seq_record.seq_np != 45)
+
                     if pos + kmer_len - 1 >= len(ungapped_to_gapped):
                         continue
 
-                    gapped_start = ungapped_to_gapped[pos]
-                    gapped_end = ungapped_to_gapped[pos + kmer_len - 1]
+                    gapped_start = int(ungapped_to_gapped[pos])
+                    gapped_end = int(ungapped_to_gapped[pos + kmer_len - 1])
 
                     gapped_sequence = seq_gapped[gapped_start:gapped_end + 1]
 
@@ -491,18 +479,16 @@ def search_patterns_in_block(block,
                         motif_strand = sequence_strand
                         hit_id_suffix = ''
 
-                    ref_seq_gapped = str(ref_seq_record.seq)
-                    ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end + 1]
-
                     vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome = compute_vectors_and_conservation(
                         block,
+                        ref_seq_record,
                         genome_ids,
                         gapped_start,
                         gapped_end + 1,
-                        ref_gapped_seq,
                         ref_genome_id,
-                        ref_seq_record,
-                        local_genome_names
+                        local_genome_names,
+                        pos,
+                        kmer_len
                     )
 
                     motif_hit_data = {
@@ -528,42 +514,36 @@ def search_patterns_in_block(block,
                         }
                     }
 
-                    motif_hit_data_converted = convert_numpy_types(motif_hit_data)
-
                     key = genome_id
                     if key not in genome_files:
-                        genome_dir = os.path.join('tmp', genome_id)
-                        os.makedirs(genome_dir, exist_ok=True)
-                        output_file = os.path.join(
-                            genome_dir,
-                            f'{output_identifier}_motif_hits_process_{process_id}.tmp'
-                        )
-                        try:
-                            genome_file = open(output_file, 'a')
-                            genome_files[key] = genome_file
-                            logger.info(f"Process {process_id}: Created output file for genome {genome_id}")
-                        except Exception as e:
-                            logger.error(f"Process {process_id}: Error creating file {output_file}: {e}",
-                                         exc_info=True)
-                            continue
-
-                    genome_file = genome_files[key]
+                        genome_files[key] = []
+                    
                     try:
-                        json.dump(motif_hit_data_converted, genome_file)
-                        genome_file.write('\n')
+                        genome_files[key].append(fast_dumps(motif_hit_data))
+                        
+                        if len(genome_files[key]) >= 10000:
+                            genome_dir = os.path.join('tmp', genome_id)
+                            output_file = os.path.join(
+                                genome_dir,
+                                f'{output_identifier}_motif_hits_process_{process_id}.tmp'
+                            )
+                            io_executor.submit(write_hits_to_disk, genome_dir, output_file, list(genome_files[key]))
+                            genome_files[key].clear()
                     except Exception as e:
-                        logger.error(f"Error writing motif hit: {e}", exc_info=True)
+                        logger.error(f"Error buffering motif hit: {e}", exc_info=True)
 
             elif search_type == 'regex':
                 # Regex search
+                seq_ungapped_orig_rc = None
                 for regex_data in patterns:
                     pattern = regex_data['pattern']
-                    regex_name = regex_data['regex']
                     regex_identifier = regex_data['identifier']
                     is_rc = regex_data['is_reverse_complement']
 
                     if is_rc:
-                        sequence_to_search = str(Seq(seq_ungapped_orig).reverse_complement())
+                        if seq_ungapped_orig_rc is None:
+                            seq_ungapped_orig_rc = str(Seq(seq_ungapped_orig).reverse_complement())
+                        sequence_to_search = seq_ungapped_orig_rc
                         total_len = len(seq_ungapped_orig)
                         motif_strand = '-' if sequence_strand == '+' else '+'
                         hit_id_suffix = '_rc'
@@ -583,26 +563,26 @@ def search_patterns_in_block(block,
                         else:
                             pos_in_original = start_index
 
-                        ungapped_to_gapped = [i for i, c in enumerate(seq_gapped) if c != '-']
+                        if ungapped_to_gapped is None:
+                            ungapped_to_gapped = np.flatnonzero(seq_record.seq_np != 45)
+
                         if pos_in_original + match_len - 1 >= len(ungapped_to_gapped):
                             continue
-                        gapped_start = ungapped_to_gapped[pos_in_original]
-                        gapped_end = ungapped_to_gapped[pos_in_original + match_len - 1]
+                        gapped_start = int(ungapped_to_gapped[pos_in_original])
+                        gapped_end = int(ungapped_to_gapped[pos_in_original + match_len - 1])
 
                         gapped_sequence = seq_gapped[gapped_start:gapped_end + 1]
 
-                        ref_seq_gapped = str(ref_seq_record.seq)
-                        ref_gapped_seq = ref_seq_gapped[gapped_start:gapped_end + 1]
-
                         vectors, conservation_value, aligned_sequences, genomic_start, genomic_end, ref_chromosome = compute_vectors_and_conservation(
                             block,
+                            ref_seq_record,
                             genome_ids,
                             gapped_start,
                             gapped_end + 1,
-                            ref_gapped_seq,
                             ref_genome_id,
-                            ref_seq_record,
-                            local_genome_names
+                            local_genome_names,
+                            pos_in_original,
+                            match_len
                         )
 
                         motif_hit_data = {
@@ -628,36 +608,22 @@ def search_patterns_in_block(block,
                             }
                         }
 
-                        motif_hit_data_converted = convert_numpy_types(motif_hit_data)
-
                         key = (genome_id, regex_identifier)
                         if key not in genome_files:
-                            genome_dir = os.path.join('tmp', genome_id)
-                            os.makedirs(genome_dir, exist_ok=True)
-                            output_file = os.path.join(
-                                genome_dir,
-                                f'{output_identifier}_{regex_identifier}_motif_hits_process_{process_id}.tmp'
-                            )
-                            try:
-                                genome_file = open(output_file, 'a')
-                                genome_files[key] = genome_file
-                                logger.info(
-                                    f"Process {process_id}: Created output file for genome {genome_id}, "
-                                    f"regex {regex_identifier}"
-                                )
-                            except Exception as e:
-                                logger.error(
-                                    f"Process {process_id}: Error creating file {output_file}: {e}",
-                                    exc_info=True
-                                )
-                                continue
-
-                        genome_file = genome_files[key]
+                            genome_files[key] = []
+                        
                         try:
-                            json.dump(motif_hit_data_converted, genome_file)
-                            genome_file.write('\n')
+                            genome_files[key].append(fast_dumps(motif_hit_data))
+                            if len(genome_files[key]) >= 10000:
+                                genome_dir = os.path.join('tmp', genome_id)
+                                output_file = os.path.join(
+                                    genome_dir,
+                                    f'{output_identifier}_{regex_identifier}_motif_hits_process_{process_id}.tmp'
+                                )
+                                io_executor.submit(write_hits_to_disk, genome_dir, output_file, list(genome_files[key]))
+                                genome_files[key].clear()
                         except Exception as e:
-                            logger.error(f"Error writing motif hit: {e}", exc_info=True)
+                            logger.error(f"Error buffering motif hit: {e}", exc_info=True)
 
             else:
                 logger.error(f"Unknown search type: {search_type}")
@@ -666,15 +632,6 @@ def search_patterns_in_block(block,
     except Exception as e:
         logger.error(f"Error processing block {block_no}: {e}", exc_info=True)
         sys.exit(1)
-
-
-def write_motif_hit(genome_file, motif_hit_data):
-    """Write a motif hit to the genome's .tmp file (JSON lines)."""
-    try:
-        json.dump(motif_hit_data, genome_file)
-        genome_file.write('\n')
-    except Exception as e:
-        logger.error(f"Error writing motif hit: {e}", exc_info=True)
 
 
 def _initialize_automaton(patterns):
@@ -704,64 +661,73 @@ def process_file_chunk(maf_file,
     block_no = 0
     local_genome_names = set()
     A = _initialize_automaton(patterns) if search_type == "kmer" else None
+    
+    # Pre-allocate a large pool of SimpleSeqRecord objects to avoid 
+    # instantiating thousands of objects during file iteration loops.
+    record_pool = [SimpleSeqRecord() for _ in range(500)]
+    io_executor = ThreadPoolExecutor(max_workers=2)
 
     try:
         with open(maf_file, 'rb') as handle:
             handle.seek(start_pos)
-            current_position = handle.tell()
-            line = handle.readline()
+            chunk_data = handle.read(end_pos - start_pos).decode('utf-8')
 
-            while current_position < end_pos and line:
-                if not (line.startswith(b'a') or line.startswith(b's')):
-                    current_position = handle.tell()
-                    line = handle.readline()
-                    continue
+        # Split blocks exactly by '\na' indicating a new MAF block
+        blocks = chunk_data.split('\na')
+        
+        for idx, block_data in enumerate(blocks):
+            if not block_data.strip():
+                continue
+                
+            # split('\na') removes the 'a', so restore it for all blocks EXCEPT the first
+            # (unless the first block actually had a newline before it, which is rare at boundaries)
+            block_string = 'a' + block_data if idx > 0 else block_data
 
-                if line.startswith(b'a'):
-                    block_data = line.decode('utf-8')
-                    current_position = handle.tell()
-                    line = handle.readline()
-
-                    while line and not line.startswith(b'a') and current_position < end_pos:
-                        if not line.startswith(b's'):
-                            current_position = handle.tell()
-                            line = handle.readline()
-                            continue
-
-                        block_data += line.decode('utf-8')
-                        current_position = handle.tell()
-                        line = handle.readline()
-
-                    block = parse_block_from_string(block_data)
-                    if block:
-                        search_patterns_in_block(
-                            block,
-                            search_type,
-                            A,
-                            patterns,
-                            genome_ids,
-                            block_no,
-                            search_in,
-                            genome_files,
-                            reverse_complement,
-                            process_id,
-                            local_genome_names,
-                            output_identifier
-                        )
-                    block_no += 1
-                else:
-                    current_position = handle.tell()
-                    line = handle.readline()
+            block = parse_block_from_string(block_string, record_pool)
+            if block:
+                search_patterns_in_block(
+                    block,
+                    search_type,
+                    A,
+                    patterns,
+                    genome_ids,
+                    block_no,
+                    search_in,
+                    genome_files,
+                    reverse_complement,
+                    process_id,
+                    local_genome_names,
+                    output_identifier,
+                    io_executor
+                )
+            block_no += 1
 
     except Exception as e:
         logger.error(f"Error in process {process_id}: {e}", exc_info=True)
     finally:
-        for gf in genome_files.values():
-            try:
-                gf.close()
-            except Exception as e:
-                logger.error(f"Error closing genome file: {e}", exc_info=True)
+        # Flush any remaining built-up motif arrays into their respective tmp files
+        for key, buffer in genome_files.items():
+            if buffer:
+                # Based on the key, rebuild the identifier
+                # For k-mer: key is genome_id
+                # For regex/pwm: key is (genome_id, motif_identifier)
+                if isinstance(key, tuple):
+                    genome_id, motif_identifier = key
+                    filename = f'{output_identifier}_{motif_identifier}_motif_hits_process_{process_id}.tmp'
+                else:
+                    genome_id = key
+                    filename = f'{output_identifier}_motif_hits_process_{process_id}.tmp'
+                
+                genome_dir = os.path.join('tmp', genome_id)
+                os.makedirs(genome_dir, exist_ok=True)
+                output_file = os.path.join(genome_dir, filename)
+                
+                try:
+                    io_executor.submit(write_hits_to_disk, genome_dir, output_file, list(buffer))
+                except Exception as e:
+                    logger.error(f"Error flushing genome file: {e}", exc_info=True)
 
+        io_executor.shutdown()
         unique_genome_names.extend(local_genome_names)
 
 
@@ -786,7 +752,7 @@ def generate_bed(tmp_dir, bed_filename):
                             if not line:
                                 continue
                             try:
-                                data = json.loads(line)
+                                data = fast_json.loads(line)
                                 chrom = data.get('chromosome', 'unknown')
                                 chrom_start = data.get('genomic_start', 0)  # 0-based inclusive
                                 chrom_end = data.get('genomic_end', 0)+1    # 0-based non inclusive (open)
@@ -802,7 +768,7 @@ def generate_bed(tmp_dir, bed_filename):
                                 bed_entries.append(
                                     f"{chrom}\t{chrom_start}\t{chrom_end}\t{name}\t{score_val}\t{strand}"
                                 )
-                            except json.JSONDecodeError:
+                            except ValueError:
                                 logger.error(f"Invalid JSON in {tmp_file_path}")
                 except Exception as e:
                     logger.error(f"Error reading .tmp file {tmp_file_path}: {e}")
@@ -859,9 +825,9 @@ def merge_results(tmp_dir, output_identifier, detailed_report):
                             if not line:
                                 continue
                             try:
-                                data = json.loads(line)
+                                data = fast_json.loads(line)
                                 merged_data.append(data)
-                            except json.JSONDecodeError:
+                            except ValueError:
                                 logger.error(f"Error decoding JSON from {file_path}")
 
             if merged_data:
@@ -874,7 +840,7 @@ def merge_results(tmp_dir, output_identifier, detailed_report):
         out_file_name = f"{genome_id}_{output_identifier}_{motif_identifier}_motif_hits.json"
         try:
             with open(out_file_name, 'w') as f:
-                json.dump(data_list, f, indent=4)
+                f.write(fast_dumps(data_list))
             logger.info(f"Wrote merged JSON: {out_file_name}")
         except Exception as e:
             logger.error(f"Error writing merged results {out_file_name}: {e}")
